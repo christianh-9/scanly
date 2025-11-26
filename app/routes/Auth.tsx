@@ -7,7 +7,7 @@ export const meta = () => ([
   {name: "description", content: "Log into your account"},
 ])
 
-const auth = () => {
+const Auth = () => {
     const { isLoading, auth } = usePuterStore();  
     const location = useLocation()
     const next = location.search.split('next=')[1]
@@ -22,8 +22,8 @@ const auth = () => {
           <div className="gradient-border shadow-1g">
             <section className="flex flex-col gap-8 bg-white rounded-2xl p-10">
               <div className="flex flex-col items-center gap-2 text-center">
-                <h1>Welcome</h1>
-                <h2>Log In to Continue Your Job Journey</h2>
+                  <h1>Welcome</h1>
+                  <h2>Log In to Continue Your Job Journey</h2>
               </div>
               <div>
                 {isLoading ? (
@@ -50,4 +50,4 @@ const auth = () => {
     )
   }
 
-export default auth
+export default Auth
