@@ -7,7 +7,7 @@ import { convertPdfToImage } from '~/lib/pdf2img'
 import { usePuterStore } from '~/lib/puter'
 import { generateUUID } from '~/lib/utils'
 
-const upload = () => {
+const Upload = () => {
     const {auth, isLoading, fs, ai ,kv} = usePuterStore()
     const navigate = useNavigate()
     const [isProcessing, setIsProcessing] = useState(false)
@@ -121,4 +121,4 @@ const upload = () => {
   )
 }
 
-export default upload
+export default Upload
