@@ -1,87 +1,108 @@
-# Welcome to React Router!
+# Scanly
 
-A modern, production-ready template for building full-stack React applications using React Router.
+A modern application designed to analyze and improve your resume using cutting-edge techniques.
 
-[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/github/remix-run/react-router-templates/tree/main/default)
+## Key Features & Benefits
 
-## Features
+- **Resume Analysis:** Upload your resume and receive a comprehensive score based on ATS compatibility, tone, content, and structure.
+- **ATS (Applicant Tracking System) Optimization:** Get specific tips to improve your resume's compatibility with ATS software.
+- **Detailed Feedback:**  Understand your resume's strengths and weaknesses with a breakdown of scores in key areas.
+- **Resume Examples:** Compare your resume to sample resumes to identify areas for improvement.
+- **Dockerized Deployment:** Easy to deploy and run using Docker.
+- **Modern UI:** Built with React, TypeScript, and TailwindCSS for a responsive and user-friendly experience.
 
-- 🚀 Server-side rendering
-- ⚡️ Hot Module Replacement (HMR)
-- 📦 Asset bundling and optimization
-- 🔄 Data loading and mutations
-- 🔒 TypeScript by default
-- 🎉 TailwindCSS for styling
-- 📖 [React Router docs](https://reactrouter.com/)
+## Prerequisites & Dependencies
 
-## Getting Started
+Before you begin, ensure you have the following installed:
 
-### Installation
+- **Node.js:** (version 20 or higher)
+- **npm:** (Node Package Manager - comes with Node.js)
+- **Docker:** (for containerized deployment)
 
-Install the dependencies:
+## Installation & Setup Instructions
 
-```bash
-npm install
-```
+1. **Clone the repository:**
 
-### Development
+   ```bash
+   git clone git@github.com:christianh-9/scanly.git
+   cd scanly
+   ```
 
-Start the development server with HMR:
+2. **Install dependencies:**
 
-```bash
-npm run dev
-```
+   ```bash
+   npm install
+   ```
 
-Your application will be available at `http://localhost:5173`.
+3. **Run in Development Mode (without Docker):**
 
-## Building for Production
+   ```bash
+   npm run start
+   ```
 
-Create a production build:
+   This will start the development server and open the application in your browser.
 
-```bash
-npm run build
-```
+4. **Build and Run with Docker:**
 
-## Deployment
+   ```bash
+   docker build -t scanly .
+   docker run -p 3000:3000 scanly
+   ```
 
-### Docker Deployment
+   This will build the Docker image and run the application in a container, accessible at `http://localhost:3000`.
 
-To build and run using Docker:
+## Usage Examples
 
-```bash
-docker build -t my-app .
+1. **Uploading a Resume:**
 
-# Run the container
-docker run -p 3000:3000 my-app
-```
+   - Navigate to the main page.
+   - Use the "File Uploader" component to upload your resume in PDF format.
+   - The application will process the resume and display the analysis results.
 
-The containerized application can be deployed to any platform that supports Docker, including:
+2. **Viewing Analysis Results:**
 
-- AWS ECS
-- Google Cloud Run
-- Azure Container Apps
-- Digital Ocean App Platform
-- Fly.io
-- Railway
+   - The analysis results are displayed in several sections:
+      - **Overall Score:** A general score representing the quality of your resume.
+      - **ATS Score:** Indicates how well your resume will perform in Applicant Tracking Systems.
+      - **Tone and Style, Content, Structure:** Scores and tips related to these specific aspects of your resume.
 
-### DIY Deployment
+3. **Comparing with Example Resumes:**
+   -  The application provides several sample resumes for comparison. Analyze these resumes to get insights into effective resume writing.
 
-If you're familiar with deploying Node applications, the built-in app server is production-ready.
+## Configuration Options
 
-Make sure to deploy the output of `npm run build`
+The application can be configured through environment variables.  While the provided `Dockerfile` doesn't explicitly use environment variables for customization, you could modify the `Dockerfile` or the application's code to incorporate environment variables if needed.  Example:
 
-```
-├── package.json
-├── package-lock.json (or pnpm-lock.yaml, or bun.lockb)
-├── build/
-│   ├── client/    # Static assets
-│   └── server/    # Server-side code
-```
+   In `Dockerfile`, add:
+   ```dockerfile
+   ENV PORT=3000
+   ```
+   And in your node application:
+   ```typescript
+   const port = process.env.PORT || 3000;
+   ```
 
-## Styling
+## Contributing Guidelines
 
-This template comes with [Tailwind CSS](https://tailwindcss.com/) already configured for a simple default starting experience. You can use whatever CSS framework you prefer.
+Contributions are welcome! If you'd like to contribute to this project, please follow these guidelines:
 
----
+1. **Fork the repository.**
+2. **Create a new branch for your feature or bug fix.**
+3. **Implement your changes.**
+4. **Write tests for your code.**
+5. **Submit a pull request.**
 
-Built with ❤️ using React Router.
+Please ensure that your pull request includes:
+
+- A clear description of the changes.
+- Test cases that cover the changes.
+- Updated documentation if necessary.
+
+## License Information
+
+This project has no specified license. All rights are reserved by the owner, christianh-9.
+
+## Acknowledgments
+
+- This project utilizes the `pdfjs-dist` library for PDF parsing and rendering.
+- The UI is styled using TailwindCSS.
