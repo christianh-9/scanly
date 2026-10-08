@@ -3,12 +3,12 @@ import ScoreGauge from './ScoreGauge'
 import ScoreBadge from './ScoreBadge';
 
 const Category = ({title, score} : {title:string, score:number}) => {
-    const textColor = score > 70 ? 'text-green-600' 
+    const textColor = score > 69 ? 'text-green-600' 
         : score > 49 ? 'text-yellow-600' 
         : 'text-red-600';
 
     return (
-        <div className="resuem-summary">
+        <div className="resume-summary">
            <div className="category">
                 <div className="flex flex-row gap-2 items-center justify-center">
                     <p className="text-2xl">{title}</p>
@@ -24,7 +24,7 @@ const Category = ({title, score} : {title:string, score:number}) => {
 
 const Summary = ({ feedback } : {feedback: Feedback}) => {
   return (
-    <div className ="bg-white ronded-2xl shadow-md w-full">Summary
+    <div className="bg-white rounded-2xl shadow-md w-full">
         <div className="flex flex-row items-center p-4 gap-8">
             <ScoreGauge score={feedback.overallScore}/>
 

@@ -36,11 +36,22 @@ Before you begin, ensure you have the following installed:
 
 3. **Run in Development Mode (without Docker):**
 
+   Start the backend (FastAPI + Gemini) in one terminal:
+
    ```bash
-   npm run start
+   cd server
+   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+   cp .env.example .env   # then paste your Gemini key into .env
+   .venv/bin/uvicorn main:app --reload --port 8001
    ```
 
-   This will start the development server and open the application in your browser.
+   Start the frontend in another terminal:
+
+   ```bash
+   npm run dev
+   ```
+
+   Open http://localhost:5173. The dev server forwards `/api` requests to the backend.
 
 4. **Build and Run with Docker:**
 

@@ -10,7 +10,7 @@ export const meta = () => ([
 const Auth = () => {
     const { isLoading, auth } = usePuterStore();  
     const location = useLocation()
-    const next = location.search.split('next=')[1]
+    const next = new URLSearchParams(location.search).get('next') || '/'
     const navigate = useNavigate()
 
     useEffect(() => {
@@ -19,7 +19,7 @@ const Auth = () => {
   
     return (
       <main className="bg-[url('/images/bg-auth.svg')] bg-cover min-h-screen flex items-center justify-center">
-          <div className="gradient-border shadow-1g">
+          <div className="gradient-border shadow-lg">
             <section className="flex flex-col gap-8 bg-white rounded-2xl p-10">
               <div className="flex flex-col items-center gap-2 text-center">
                   <h1>Welcome</h1>

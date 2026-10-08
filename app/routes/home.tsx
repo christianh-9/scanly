@@ -14,30 +14,32 @@ export function meta({}: Route.MetaArgs) {
 
 export default function Home() {
 
-    const { auth, kv } = usePuterStore();  
+    const { auth, isLoading, kv } = usePuterStore();
     const navigate = useNavigate()
     const [resumes, setResumes] = useState<Resume[]>([])
     const [loadingResumes, setLoadingResumes] = useState(false)
   
     useEffect(() => {
-      if(!auth.isAuthenticated) navigate('/auth?next=/')
-    }, [auth.isAuthenticated])
+      if(!isLoading && !auth.isAuthenticated) navigate('/auth?next=/')
+    }, [isLoading, auth.isAuthenticated])
 
     useEffect(() => {
+      if(!auth.isAuthenticated) return
       const loadResumes = async () => {
         setLoadingResumes(true)
 
         const resumes = (await kv.list('resume:*', true)) as KVItem[];
 
-        const parsedResumes = resumes?.map((resume) => (
-            JSON.parse(resume.value) as Resume
-        ))
+        // skip records saved by older versions before analysis finished
+        const parsedResumes = resumes
+            ?.map((resume) => JSON.parse(resume.value) as Resume)
+            .filter((resume) => typeof resume.feedback === 'object')
 
         setResumes(parsedResumes || [])
         setLoadingResumes(false)
       }
       loadResumes()
-    }, [])
+    }, [auth.isAuthenticated])
 
   return <main className="bg-[url('/images/bg-main.svg')] bg-cover"> 
     <NavBar/>
