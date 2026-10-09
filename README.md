@@ -123,15 +123,6 @@ Free Render services sleep after 15 idle minutes. The upload page pings `/api/he
 
 **Frontend on [Vercel](https://vercel.com):** import the repo and set `VITE_API_URL` to the Render URL (for example `https://scanly-api.onrender.com`). Vite bakes this in at build time, so redeploy after changing it.
 
-### Docker
-
-The included `Dockerfile` builds and serves the frontend only:
-
-```bash
-docker build -t scanly .
-docker run -p 3000:3000 scanly
-```
-
 ## Privacy
 
 Resumes are sent to Google Gemini for analysis. Files and reviews are stored in your own Puter account, and deleting a review removes its PDF and preview image too.
