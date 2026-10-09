@@ -1,21 +1,24 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import ATS from '~/components/ATS'
+import DeleteResumeButton from '~/components/DeleteResumeButton'
 import Details from '~/components/Details'
+import { ArrowLeftIcon, ExternalIcon } from '~/components/Icons'
+import NavBar from '~/components/NavBar'
 import Summary from '~/components/Summary'
 import { usePuterStore } from '~/lib/puter'
 
 export const meta = () => ([
   {title: 'Scanly | Review'},
-  {name: "description", content: "Overview of your resume"},
+  {name: "description", content: "Your resume review"},
 ])
 
-const resume = () => {
+const ResumePage = () => {
     const {auth, isLoading, fs, kv} = usePuterStore()
     const {id} = useParams()
+    const [resume, setResume] = useState<Resume | null>(null)
     const [imageUrl, setImageUrl] = useState('')
     const [resumeUrl, setResumeUrl] = useState('')
-    const [feedback, setFeedback] = useState<Feedback | null>(null)
     const [notFound, setNotFound] = useState(false)
     const navigate = useNavigate()
 
@@ -25,67 +28,96 @@ const resume = () => {
 
     useEffect(() => {
         if(!auth.isAuthenticated) return
+        const urls: string[] = []
         const loadResume = async () => {
-            const resume = await kv.get(`resume:${id}`)
-            const data = resume ? JSON.parse(resume) : null
+            const raw = await kv.get(`resume:${id}`)
+            const data: Resume | null = raw ? JSON.parse(raw) : null
             if(typeof data?.feedback !== 'object') return setNotFound(true)
+            setResume(data)
 
-            const resumeBlob = await fs.read(data.resumePath)
-            if(!resumeBlob) return;
-
-            const pdfBlob = new Blob([resumeBlob], { type:'application/pdf'})
-            const resumeUrl = URL.createObjectURL(pdfBlob)
-            setResumeUrl(resumeUrl)
-
-            const imageBlob = await fs.read(data.imagePath)
-            if(!imageBlob) return;
-            const imageUrl = URL.createObjectURL(imageBlob)
-            setImageUrl(imageUrl)
-
-            setFeedback(data.feedback)
+            const [pdfBlob, imageBlob] = await Promise.all([fs.read(data.resumePath), fs.read(data.imagePath)])
+            if (pdfBlob) {
+                const url = URL.createObjectURL(new Blob([pdfBlob], { type: 'application/pdf' }))
+                urls.push(url)
+                setResumeUrl(url)
+            }
+            if (imageBlob) {
+                const url = URL.createObjectURL(imageBlob)
+                urls.push(url)
+                setImageUrl(url)
+            }
         }
         loadResume()
+        return () => urls.forEach(URL.revokeObjectURL)
     }, [id, auth.isAuthenticated])
+
+    const feedback = resume?.feedback
+
     return (
-        <main className = "!pt-0">
-            <nav className="resume-nav">
-                <Link to="/" className="back-button">
-                    <img src="/icons/back.svg" alt="logo" className="w-2.5 h-2.5"/>
-                    <span className="text-gray-800 text-sm font-semibold">
-                        Back to Homepage
-                    </span>
-                </Link>
-            </nav>
-            <div className="flex flex-row w-full max-lg:flex-col-reverse">
-                <section className="feedback-section bg-[url('/images/bg-small.svg')] bg-cover h-[100vh] sticky top-0 items-center justify-center">
-                    {imageUrl && resumeUrl && (
-                        <div className="animate-in fade-in duration-1000 gradient-border max-sm:m-0 h-[90%] max-xl:h-fit w-fit">
-                            <a href={resumeUrl} target="_blank" rel="noopener noreferrer">
-                                <img src={imageUrl}
-                                className="w-full h-full object-contain rounded-2xl"
-                                title="resume"
-                                />
-                            </a>
-                        </div>
-                    )}
-                </section>
-                <section className="feedback-section">
-                    <h2 className="text-4xl !text-black font-bold">Resume Review</h2>
-                    {feedback ? (
-                        <div className="flex flex-col gap-8 animate-in fade-in duration-1000">
-                            <Summary feedback={feedback}/>
-                            <ATS score={feedback.ATS.score || 0} suggestions={feedback.ATS.tips || []}/>
-                            <Details feedback ={feedback}/>
-                        </div>
-                    ) : notFound ? (
-                        <p className="text-lg text-gray-500">This resume wasn't found or its analysis didn't finish. <Link to="/upload" className="underline">Upload it again</Link>.</p>
-                    ) : (
-                        <img src="/images/resume-scan-2.gif" className="w-full"/>
-                    )}
-                </section>
+        <main className="min-h-screen">
+            <NavBar/>
+
+            <div className="border-b border-line">
+            <div className="container-page flex flex-wrap items-center justify-between gap-3 py-4">
+                <div className="flex min-w-0 items-center gap-3">
+                    <Link to="/" className="btn-icon" aria-label="Back to reviews"><ArrowLeftIcon/></Link>
+                    <div className="min-w-0">
+                        <h1 className="truncate font-semibold">{resume?.companyName || (resume ? 'Untitled review' : 'Review')}</h1>
+                        {resume?.jobTitle && <p className="truncate text-sm text-muted">{resume.jobTitle}</p>}
+                    </div>
+                </div>
+                {resume && <DeleteResumeButton resume={resume} variant="button" onDeleted={() => navigate('/')}/>}
             </div>
+            </div>
+
+            {notFound ? (
+                <div className="container-page py-16 text-center">
+                    <h2 className="font-semibold">Review not found</h2>
+                    <p className="mt-1 text-sm text-muted">It was deleted, or its analysis didn't finish.</p>
+                    <Link to="/upload" className="btn-primary mt-6">Start a new review</Link>
+                </div>
+            ) : (
+                <div className="container-page grid gap-10 py-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:py-10">
+                    <aside className="order-2 lg:order-none lg:sticky lg:top-24 lg:self-start">
+                        <div className="panel overflow-hidden">
+                            <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+                                <h2 className="text-sm font-medium">Resume</h2>
+                                {resumeUrl && (
+                                    <a href={resumeUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded text-sm text-muted hover:text-fg">
+                                        Open PDF <ExternalIcon/>
+                                    </a>
+                                )}
+                            </div>
+                            <div className="aspect-[8.5/11] max-h-[60vh] bg-white lg:max-h-none">
+                                {imageUrl
+                                    ? <img src={imageUrl} alt="First page of the uploaded resume" className="size-full object-contain object-top"/>
+                                    : <div className="size-full animate-pulse bg-hover"/>}
+                            </div>
+                        </div>
+                    </aside>
+
+                    {/* below lg this column dissolves so the resume can sit between the verdict and the details */}
+                    <div className="contents lg:flex lg:flex-col lg:gap-8">
+                        {feedback ? (
+                            <>
+                                <div className="order-1"><Summary feedback={feedback}/></div>
+                                <div className="order-3 flex flex-col gap-8">
+                                    <ATS score={feedback.ATS.score || 0} suggestions={feedback.ATS.tips || []}/>
+                                    <Details feedback={feedback}/>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="order-1 flex flex-col gap-4" aria-busy="true" aria-label="Loading review">
+                                <div className="h-24 w-40 animate-pulse rounded bg-hover"/>
+                                <div className="h-6 w-72 animate-pulse rounded bg-hover"/>
+                                <div className="mt-4 h-40 animate-pulse rounded-lg bg-hover"/>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </main>
     )
-    }
+}
 
-export default resume
+export default ResumePage

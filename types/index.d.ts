@@ -5,6 +5,7 @@ interface Resume {
   imagePath: string;
   resumePath: string;
   feedback: Feedback;
+  createdAt?: number;
 }
 
 interface Feedback {

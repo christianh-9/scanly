@@ -1,81 +1,81 @@
-import React, { useCallback, useState } from 'react'
-import { useDropzone } from 'react-dropzone'
-import { formatSize } from '~/lib/utils'
+import { useState } from 'react'
+import { useDropzone, type FileRejection } from 'react-dropzone'
+import { cn, formatSize } from '~/lib/utils'
+import { FileIcon, UploadIcon, XIcon } from './Icons'
 
 interface FileUploaderProps {
-    onFileSelect?: (file:File | null) => void
+    onFileSelect?: (file: File | null) => void
+    disabled?: boolean
 }
 
-const FileUploader = ({onFileSelect}: FileUploaderProps) => {
-    const [selectedFile, setSelectedFile] = useState<File | null>(null)
+const maxFileSize = 20 * 1024 * 1024
 
-    const onDrop = useCallback((acceptedFiles: File[]) => {
-        const file = acceptedFiles[0] || null
+const FileUploader = ({ onFileSelect, disabled }: FileUploaderProps) => {
+    const [selectedFile, setSelectedFile] = useState<File | null>(null)
+    const [rejection, setRejection] = useState('')
+
+    const select = (file: File | null) => {
         setSelectedFile(file)
         onFileSelect?.(file)
-    }, [onFileSelect])
+    }
 
-    const maxFileSize = 20 * 1024 * 1024
-   
-    const {getRootProps, getInputProps, isDragActive} = useDropzone({
-        onDrop,
+    const onDropRejected = ([rejected]: FileRejection[]) => {
+        const code = rejected?.errors[0]?.code
+        setRejection(code === 'file-too-large'
+            ? `That file is ${formatSize(rejected.file.size)}. The limit is ${formatSize(maxFileSize)}.`
+            : 'Only PDF files are supported. Export your resume as a PDF and try again.')
+    }
+
+    const { getRootProps, getInputProps, isDragActive } = useDropzone({
+        onDrop: ([file]) => { setRejection(''); select(file ?? null) },
+        onDropRejected,
         multiple: false,
-        accept: { 'application/pdf': ['.pdf']},
+        accept: { 'application/pdf': ['.pdf'] },
         maxSize: maxFileSize,
+        disabled,
     })
 
-    const handleRemoveFile = () => {
-        setSelectedFile(null)
-        onFileSelect?.(null)
+    if (selectedFile) {
+        return (
+            <div className="flex items-center gap-3 rounded-md border border-line bg-raised px-3 py-3">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded border border-line text-muted">
+                    <FileIcon />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{selectedFile.name}</p>
+                    <p className="text-xs text-subtle num">{formatSize(selectedFile.size)}</p>
+                </div>
+                <button type="button" className="btn-icon" onClick={() => select(null)} disabled={disabled} aria-label="Remove file">
+                    <XIcon />
+                </button>
+            </div>
+        )
     }
-
-    const file = selectedFile
 
     return (
-        <div className="w-full gradient-border">
-            <div {...getRootProps()}>
-                <input {...getInputProps()} />
-
-                <div className="space-y-4 cursor-pointer">
-
-                    {file ? (
-                        <div className="uploader-selected-file" onClick={(e) => e.stopPropagation()}>
-                            <img src="/images/pdf.png" alt="pdf" className="size-10"/>
-                            <div className="flex items-center space-x-3">
-                                <div> 
-                                    <p className="text-sm font-medium text-gray-700 truncate max-w-xs"> 
-                                            {file.name}    
-                                    </p> 
-                                    <p className="text-sm text-gray-500">
-                                         {formatSize(file.size)}
-                                    </p>
-                                </div>
-                            </div>
-                            <button className="p-2 cursor-pointer" onClick={(e) => {
-                                e.stopPropagation()
-                                handleRemoveFile()
-                            }}>
-                                <img src="/icons/cross.svg" alt="remove" className="w-4 h-4"/>
-                            </button>
-                        </div>
-                        
-                    ): (
-                        <div>
-                            <div className="mx-auto w-16 h-16 flex items-center justify-center mb-2">
-                                <img src="/icons/info.svg" alt="upload" className="size-20"></img>
-                            </div>
-                            <p className="text-lg text-gray-500">
-                                <span className="font-semibold">
-                                    Click to upload
-                                </span> or drag and drop
-                            </p>
-                            <p className="text-lg text-gray-500">PDF (max {formatSize(maxFileSize)})</p>
-                        </div>
-                    )}
+        <div>
+            <div
+                {...getRootProps()}
+                className={cn(
+                    'flex cursor-pointer flex-col items-center gap-3 rounded-md border border-dashed px-6 py-10 text-center transition-colors',
+                    isDragActive ? 'border-accent bg-accent/5' : 'border-line-strong hover:border-subtle hover:bg-hover/50',
+                )}
+            >
+                <input {...getInputProps()} id="resume-file" />
+                <div className="flex size-10 items-center justify-center rounded-full border border-line text-muted">
+                    <UploadIcon />
+                </div>
+                <div>
+                    <p className="text-sm">
+                        <span className="font-medium text-fg">{isDragActive ? 'Drop to upload' : 'Click to upload'}</span>
+                        {!isDragActive && <span className="text-muted"> or drag and drop</span>}
+                    </p>
+                    <p className="mt-1 text-xs text-subtle">PDF up to {formatSize(maxFileSize)}</p>
                 </div>
             </div>
+            {rejection && <p role="alert" className="mt-2 text-sm text-fail">{rejection}</p>}
         </div>
     )
-    }
+}
 
 export default FileUploader

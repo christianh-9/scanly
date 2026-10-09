@@ -1,14 +1,24 @@
-import React from 'react'
-import {Link} from "react-router"
+import { Link, useLocation } from "react-router";
+import { LogoMark, PlusIcon } from "./Icons";
 
 const NavBar = () => {
+    const { pathname } = useLocation();
+
     return (
-        <nav className="navbar">
-            <Link to="/">
-                <p className="text-2xl font-bold text-gradient">Scanly</p>
-            </Link>
-            <Link to="/upload" className="primary-button w-fit">Upload Resume</Link>
-        </nav>
-    )
-}
-export default NavBar
+        <header className="sticky top-0 z-10 border-b border-line bg-bg/80 backdrop-blur-md">
+            <nav className="container-page flex h-14 items-center justify-between">
+                <Link to="/" className="flex items-center gap-2 rounded-md text-base font-semibold tracking-tight">
+                    <LogoMark />
+                    Scanly
+                </Link>
+                {pathname !== "/upload" && (
+                    <Link to="/upload" className="btn-primary h-8 px-3">
+                        <PlusIcon /> New review
+                    </Link>
+                )}
+            </nav>
+        </header>
+    );
+};
+
+export default NavBar;

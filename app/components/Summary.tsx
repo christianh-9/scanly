@@ -1,48 +1,55 @@
-import React from 'react'
-import ScoreGauge from './ScoreGauge'
-import ScoreBadge from './ScoreBadge';
+import { cn, scoreTone, toneBg, toneText, verdict } from '~/lib/utils'
 
-const Category = ({title, score} : {title:string, score:number}) => {
-    const textColor = score > 69 ? 'text-green-600' 
-        : score > 49 ? 'text-yellow-600' 
-        : 'text-red-600';
+const CATEGORIES = [
+    { key: 'ATS', label: 'ATS' },
+    { key: 'toneAndStyle', label: 'Tone & style' },
+    { key: 'content', label: 'Content' },
+    { key: 'structure', label: 'Structure' },
+    { key: 'skills', label: 'Skills' },
+] as const
+
+// The verdict: overall score, one plain sentence, then the five category bars.
+const Summary = ({ feedback }: { feedback: Feedback }) => {
+    const score = feedback.overallScore
+    const tone = scoreTone(score)
+    const improveCount = CATEGORIES.reduce(
+        (n, { key }) => n + feedback[key].tips.filter((t) => t.type === 'improve').length, 0)
 
     return (
-        <div className="resume-summary">
-           <div className="category">
-                <div className="flex flex-row gap-2 items-center justify-center">
-                    <p className="text-2xl">{title}</p>
-                    <ScoreBadge score={score}/>
-                </div>
-                <p className="text-2xl">
-                    <span className={textColor}>{score}</span>/100
+        <section aria-labelledby="verdict" className="flex flex-col gap-8">
+            <div>
+                <p className="flex items-baseline gap-2">
+                    <span className={cn('text-[clamp(4rem,10vw,6rem)] font-medium leading-none tracking-[-0.04em] num', toneText[tone])}>
+                        {score}
+                    </span>
+                    <span className="text-xl text-subtle num">/100</span>
                 </p>
-           </div>
-        </div>
-    )
-}
-
-const Summary = ({ feedback } : {feedback: Feedback}) => {
-  return (
-    <div className="bg-white rounded-2xl shadow-md w-full">
-        <div className="flex flex-row items-center p-4 gap-8">
-            <ScoreGauge score={feedback.overallScore}/>
-
-            <div className="flex flex-col gap-2">
-                <h2 className="text-2xl font-bold">
-                    Your Resume score
-                </h2>
-                <p className="text-sm text-gray-500">
-                    This score is calculated based on the variables below.
+                <h2 id="verdict" className="mt-3 text-2xl font-semibold tracking-tight text-balance">{verdict(score)}</h2>
+                <p className="mt-1 text-sm text-muted">
+                    {improveCount === 0 ? 'No changes flagged.' : `${improveCount} ${improveCount === 1 ? 'change' : 'changes'} flagged below.`}
                 </p>
             </div>
-        </div>
-        <Category title="Tone & Style" score={feedback.toneAndStyle.score}/>
-        <Category title="Content" score={feedback.content.score}/>
-        <Category title="Structure" score={feedback.structure.score}/>
-        <Category title="Skills score" score={feedback.skills.score}/>
-    </div>
-  )
+
+            <ul className="flex flex-col gap-3.5">
+                {CATEGORIES.map(({ key, label }, i) => {
+                    const s = feedback[key].score
+                    const t = scoreTone(s)
+                    return (
+                        <li key={key} className="grid grid-cols-[110px_1fr_36px] items-center gap-4 text-sm">
+                            <span className="text-muted">{label}</span>
+                            <span className="h-1.5 overflow-hidden rounded-full bg-line" aria-hidden="true">
+                                <span
+                                    className={cn('bar-fill block h-full rounded-full', toneBg[t])}
+                                    style={{ width: `${s}%`, animationDelay: `${i * 70}ms` }}
+                                />
+                            </span>
+                            <span className={cn('text-right num', toneText[t])}>{s}</span>
+                        </li>
+                    )
+                })}
+            </ul>
+        </section>
+    )
 }
 
 export default Summary

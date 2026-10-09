@@ -1,33 +1,63 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import FileUploader from '~/components/FileUploader'
+import { AlertIcon, CheckIcon, SpinnerIcon } from '~/components/Icons'
 import NavBar from '~/components/NavBar'
 import { convertPdfToImage } from '~/lib/pdf2img'
 import { usePuterStore } from '~/lib/puter'
-import { generateUUID } from '~/lib/utils'
+import { cn, generateUUID } from '~/lib/utils'
+
+export const meta = () => ([
+    { title: 'Scanly | New review' },
+    { name: 'description', content: 'Upload a resume for a blunt, specific review.' },
+])
+
+type StepStatus = 'pending' | 'active' | 'done' | 'error'
+interface Step { label: string; status: StepStatus; ms?: number }
+
+const STEPS = ['Rendering first page', 'Analyzing resume', 'Uploading PDF', 'Uploading preview', 'Saving review']
 
 const Upload = () => {
     const {auth, isLoading, fs, kv} = usePuterStore()
     const navigate = useNavigate()
-    const [isProcessing, setIsProcessing] = useState(false)
-    const [statusText, setStatusText] = useState('')
+    const [steps, setSteps] = useState<Step[] | null>(null)
     const [error, setError] = useState('')
     const [file, setFile] = useState<File | null>(null)
+    const stepStart = useRef(0)
+    const runStart = useRef(0)
+    const logRef = useRef<HTMLElement>(null)
+    const [now, setNow] = useState(0)
 
     useEffect(() => {
         if(!isLoading && !auth.isAuthenticated) navigate('/auth?next=/upload')
     }, [isLoading, auth.isAuthenticated])
 
-    const handleFileSelect = (file: File | null) => {
-        setFile(file)
+    const isProcessing = steps !== null && !error
+
+    // live clock for the active step and the run total
+    useEffect(() => {
+        if (!isProcessing) return
+        const t = setInterval(() => setNow(performance.now()), 100)
+        return () => clearInterval(t)
+    }, [isProcessing])
+
+    // marks step i active and everything before it done, recording how long the previous step took
+    const advance = (i: number) => {
+        const now = performance.now()
+        const elapsed = now - stepStart.current // read before the ref moves; the updater below runs later
+        setSteps((s) => s && s.map((step, j) =>
+            j === i - 1 ? { ...step, status: 'done', ms: elapsed }
+            : j === i ? { ...step, status: 'active' }
+            : step))
+        stepStart.current = now
     }
 
     const analyze = async ({ companyName, jobTitle, jobDescription, file}: {companyName : string, jobTitle: string, jobDescription:string, file: File}) => {
-        setStatusText("Converting to image...")
+        advance(0)
         const imageFile = await convertPdfToImage(file)
-        if(!imageFile.file) throw new Error(imageFile.error || "Failed to convert PDF to image")
+        if(!imageFile.file) throw new Error(imageFile.error || "Couldn't read that PDF. Check it opens, then try again.")
 
-        setStatusText("Analyzing...")
+        advance(1)
         const body = new FormData()
         body.append('resume', file)
         body.append('jobTitle', jobTitle)
@@ -39,14 +69,15 @@ const Upload = () => {
         }
         const feedback: Feedback = await res.json()
 
-        setStatusText("Uploading the file...")
+        advance(2)
         const uploadedFile = await fs.upload([file])
-        if (!uploadedFile) throw new Error("Failed to upload file")
+        if (!uploadedFile) throw new Error("Couldn't upload the PDF to your Puter storage.")
 
-        setStatusText("Uploading the image...")
+        advance(3)
         const uploadedImage = await fs.upload([imageFile.file])
-        if (!uploadedImage) throw new Error("Failed to upload image")
+        if (!uploadedImage) throw new Error("Couldn't upload the preview image.")
 
+        advance(4)
         const uuid = generateUUID()
         const data: Resume = {
             id: uuid,
@@ -54,78 +85,115 @@ const Upload = () => {
             imagePath: uploadedImage.path,
             companyName, jobTitle,
             feedback,
+            createdAt: Date.now(),
         }
         await kv.set(`resume:${uuid}`, JSON.stringify(data))
-        setStatusText("Analysis complete, redirecting...")
+        advance(5)
         navigate(`/resume/${uuid}`)
     }
 
-    const handleAnalyze = async (args: Parameters<typeof analyze>[0]) => {
-        setIsProcessing(true)
+    const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+        e.preventDefault()
+        const formData = new FormData(e.currentTarget)
+        const companyName = (formData.get('company-name') as string).trim()
+        const jobTitle = (formData.get('job-title') as string).trim()
+        const jobDescription = (formData.get('job-description') as string).trim()
+
+        if(!file) return setError("Choose a PDF resume first.")
+
         setError('')
+        setSteps(STEPS.map((label) => ({ label, status: 'pending' })))
+        runStart.current = stepStart.current = performance.now()
+        setNow(runStart.current)
+        // on phones the log sits below the form; bring it into view
+        logRef.current?.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
         try {
-            await analyze(args)
+            await analyze({ companyName, jobTitle, jobDescription, file })
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err))
-            setIsProcessing(false)
+            setSteps((s) => s && s.map((step) => step.status === 'active' ? { ...step, status: 'error' } : step))
         }
     }
 
-    const handleSubmit =(e: FormEvent<HTMLFormElement>) => {
-        e.preventDefault()
-        const form = e.currentTarget.closest('form')
-        if (!form) return
-        const formData = new FormData(form)
-
-        const companyName = formData.get('company-name') as string 
-        const jobTitle = formData.get('job-title') as string
-        const jobDescription = formData.get('job-description') as string
-
-        if(!file) return setError("Please choose a PDF resume first")
-
-        handleAnalyze({ companyName, jobTitle, jobDescription, file})
-    }   
-
   return (
-    <main className="bg-[url('/images/bg-main.svg')] bg-cover"> 
+    <main className="min-h-screen">
         <NavBar/>
 
-        <section className="main-section">
-            <div className="page-heading py-16">
-                <h1>Smart feedback for your dream job</h1>
-                {isProcessing ? (
-                    <> 
-                        <h2>{statusText}</h2>
-                        <img src="/images/resume-scan.gif" className="w-full"/>
-                    </>
-                ) : (
-                    <h2>Drop your resume for an ATS score and tips for improvement</h2>
-                )} 
-                {error && <p className="text-red-600 text-lg mt-4">{error}</p>}
-                {!isProcessing && (
-                    <form id="upload-form" onSubmit ={handleSubmit} className="flex flex-col gap-4 mt-8">
-                        <div className="form-div">
-                            <label htmlFor="company-name">Company Name</label>
-                            <input type="text" name="company-name" placeholder="Company Name" id="company-name"/>
-                        </div>
-                        <div className="form-div">
-                            <label htmlFor="job-title">Job title</label>
-                            <input type="text" name="job-title" placeholder="Job Title" id="job-title"/>
-                        </div>
-                        <div className="form-div">
-                            <label htmlFor="job-description">Job Description</label>
-                            <textarea rows={5} name="job-description" placeholder="Job Description" id="job-description"/>
-                        </div>
-                        <div className="form-div">
-                            <label>Upload Resume</label>
-                            <FileUploader onFileSelect={handleFileSelect}/>
-                        </div>
+        <section className="container-page py-10 sm:py-14">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">New review</h1>
+            <p className="mt-1 max-w-[60ch] text-sm text-muted">
+                Upload a PDF. Add the job you're applying for and the review is scored against it; leave it blank for a general review.
+            </p>
 
-                        <button className="primary-button" type="submit">
-                            Analyze Resume
+            <div className="mt-8 grid gap-10 lg:grid-cols-[minmax(0,1fr)_340px]">
+            <div>
+                <form id="upload-form" onSubmit={handleSubmit} className="flex flex-col gap-5">
+                    <fieldset disabled={isProcessing} className="contents">
+                        <div className="grid gap-5 sm:grid-cols-2">
+                            <div className="flex flex-col gap-2">
+                                <label htmlFor="company-name" className="field-label">Company</label>
+                                <input className="field" type="text" name="company-name" id="company-name" placeholder="Acme Inc." autoComplete="organization"/>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                                <label htmlFor="job-title" className="field-label">Job title</label>
+                                <input className="field" type="text" name="job-title" id="job-title" placeholder="Frontend Engineer" autoComplete="off"/>
+                            </div>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <label htmlFor="job-description" className="field-label">Job description</label>
+                            <textarea className="field min-h-36 resize-y" rows={6} name="job-description" id="job-description" placeholder="Paste the posting. The more specific, the more specific the feedback."/>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <label htmlFor="resume-file" className="field-label">Resume</label>
+                            <FileUploader onFileSelect={(f) => { setFile(f); setError('') }} disabled={isProcessing}/>
+                        </div>
+                    </fieldset>
+
+                    {error && !steps && <p role="alert" className="text-sm text-fail">{error}</p>}
+
+                    <div className="flex justify-end border-t border-line pt-5">
+                        <button className="btn-primary" type="submit" disabled={isProcessing}>
+                            {isProcessing && <SpinnerIcon/>}
+                            {isProcessing ? 'Analyzing…' : error && steps ? 'Try again' : 'Analyze resume'}
                         </button>
-                    </form>
-                )}
+                    </div>
+                </form>
+            </div>
+
+            <aside ref={logRef} aria-live="polite" className="scroll-mt-20">
+                <div className="panel overflow-hidden">
+                    <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+                        <h2 className="text-sm font-medium">Analysis log</h2>
+                        {steps && (
+                            <span className={cn('text-xs', error ? 'text-fail' : 'text-muted')}>
+                                {error ? 'Failed' : 'Running'}
+                                {isProcessing && <span className="num"> · {((now - runStart.current) / 1000).toFixed(1)}s</span>}
+                            </span>
+                        )}
+                    </div>
+                    <ol className="flex flex-col py-2">
+                            {(steps ?? STEPS.map((label): Step => ({ label, status: 'pending' }))).map((step) => (
+                                <li key={step.label} className={cn('flex items-center gap-3 px-4 py-1.5 text-sm',
+                                    step.status === 'pending' && 'text-subtle',
+                                    step.status === 'error' && 'text-fail')}>
+                                    <span className="flex size-4 items-center justify-center">
+                                        {step.status === 'done' && <CheckIcon className="text-pass"/>}
+                                        {step.status === 'active' && <SpinnerIcon className="text-fg"/>}
+                                        {step.status === 'error' && <AlertIcon/>}
+                                        {step.status === 'pending' && <span className="size-1.5 rounded-full bg-line-strong"/>}
+                                    </span>
+                                    <span className="flex-1">{step.label}</span>
+                                    {step.ms !== undefined && <span className="text-xs text-subtle num">{(step.ms / 1000).toFixed(1)}s</span>}
+                                    {step.status === 'active' && <span className="text-xs text-muted num">{((now - stepStart.current) / 1000).toFixed(1)}s</span>}
+                                </li>
+                            ))}
+                    </ol>
+                    {!steps && <p className="border-t border-line px-4 py-3 text-xs text-subtle">Analysis can take up to a minute.</p>}
+                    {error && steps && (
+                        <p role="alert" className="border-t border-line px-4 py-3 text-sm text-fail">{error}</p>
+                    )}
+                </div>
+            </aside>
             </div>
         </section>
     </main>

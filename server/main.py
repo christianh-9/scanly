@@ -4,13 +4,15 @@ from typing import Literal
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from pydantic import BaseModel, Field, ValidationError
 
 load_dotenv()
 
 MAX_PDF_BYTES = 20 * 1024 * 1024  # matches the limit in FileUploader.tsx
-MODEL = "gemini-flash-latest"  # alias tracks the current Flash model, so it won't get retired under us
+# aliases track the current models, so they won't get retired under us; lite is the fallback when Flash is overloaded
+MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"]
+BUSY_CODES = {429, 500, 503}
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 app = FastAPI(title="Scanly API")
@@ -68,20 +70,28 @@ async def analyze(
     if len(pdf) > MAX_PDF_BYTES:
         raise HTTPException(413, "Resume must be 20 MB or smaller")
 
-    try:
-        response = await client.aio.models.generate_content(
-            model=MODEL,
-            contents=[
-                types.Part.from_bytes(data=pdf, mime_type="application/pdf"),
-                build_prompt(jobTitle, jobDescription),
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_json_schema=Feedback.model_json_schema(),
-            ),
-        )
-    except Exception as e:
-        raise HTTPException(502, f"AI request failed: {e}")
+    response = None
+    for model in MODELS:
+        try:
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=[
+                    types.Part.from_bytes(data=pdf, mime_type="application/pdf"),
+                    build_prompt(jobTitle, jobDescription),
+                ],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_json_schema=Feedback.model_json_schema(),
+                ),
+            )
+            break
+        except errors.APIError as e:
+            if e.code not in BUSY_CODES:
+                raise HTTPException(502, f"AI request failed: {e.message or e}")
+        except Exception as e:
+            raise HTTPException(502, f"AI request failed: {e}")
+    if response is None:
+        raise HTTPException(503, "Gemini is overloaded right now. Wait a minute and try again.")
 
     try:
         return Feedback.model_validate_json(response.text or "")

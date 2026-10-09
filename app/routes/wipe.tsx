@@ -29,33 +29,31 @@ const WipeApp = () => {
     };
 
     if (isLoading) {
-        return <div>Loading...</div>;
+        return <main className="container-page py-10 text-sm text-muted">Loading…</main>;
     }
 
     if (error) {
-        return <div>Error {error}</div>;
+        return <main className="container-page py-10 text-sm text-fail">Error: {error}</main>;
     }
 
     return (
-        <div>
-            Authenticated as: {auth.user?.username}
-            <div>Existing files:</div>
-            <div className="flex flex-col gap-4">
-                {files.map((file) => (
-                    <div key={file.id} className="flex flex-row gap-4">
-                        <p>{file.name}</p>
-                    </div>
-                ))}
-            </div>
+        <main className="container-page flex flex-col gap-6 py-10">
             <div>
-                <button
-                    className="bg-blue-500 text-white px-4 py-2 rounded-md cursor-pointer"
-                    onClick={() => handleDelete()}
-                >
-                    Wipe App Data
+                <h1 className="text-2xl font-semibold tracking-tight">Wipe app data</h1>
+                <p className="mt-1 text-sm text-muted">Signed in as {auth.user?.username}. Deletes every file and review Scanly has stored.</p>
+            </div>
+            <ul className="panel divide-y divide-line text-sm">
+                {files.length === 0 && <li className="px-4 py-3 text-subtle">No files stored.</li>}
+                {files.map((file) => (
+                    <li key={file.id} className="px-4 py-3 num">{file.name}</li>
+                ))}
+            </ul>
+            <div>
+                <button className="btn-danger" onClick={() => handleDelete()}>
+                    Wipe app data
                 </button>
             </div>
-        </div>
+        </main>
     );
 };
 

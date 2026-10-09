@@ -422,3 +422,9 @@ export const usePuterStore = create<PuterStore>((set, get) => {
     clearError: () => set({ error: null }),
   };
 });
+// Removes a review and the files it points at. Missing files are ignored so half-saved records can still be cleared.
+export const deleteResume = async (resume: Pick<Resume, "id" | "resumePath" | "imagePath">) => {
+  const { fs, kv } = usePuterStore.getState();
+  await Promise.allSettled([fs.delete(resume.resumePath), fs.delete(resume.imagePath)]);
+  await kv.delete(`resume:${resume.id}`);
+};
