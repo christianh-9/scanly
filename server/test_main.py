@@ -4,6 +4,7 @@ import os
 from types import SimpleNamespace
 
 os.environ.setdefault("GEMINI_API_KEY", "test")
+os.environ.setdefault("ALLOWED_ORIGINS", "https://scanly.example/, https://other.example")
 from fastapi.testclient import TestClient
 
 import main
@@ -51,5 +52,14 @@ async def busy(**_):
 main.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=busy)))
 r = api.post("/api/analyze", files=pdf)
 assert r.status_code == 503 and "overloaded" in r.json()["detail"], r.text
+
+# health check for waking the server
+assert api.get("/api/health").json() == {"ok": True}
+
+# CORS: listed origins allowed (trailing slash tolerated), others not
+pre = lambda origin: api.options("/api/analyze", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+assert pre("https://scanly.example").headers.get("access-control-allow-origin") == "https://scanly.example"
+assert pre("https://other.example").headers.get("access-control-allow-origin") == "https://other.example"
+assert "access-control-allow-origin" not in pre("https://evil.example").headers
 
 print("ok")

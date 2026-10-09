@@ -15,6 +15,9 @@ export const meta = () => ([
 type StepStatus = 'pending' | 'active' | 'done' | 'error'
 interface Step { label: string; status: StepStatus; ms?: number }
 
+// empty in local dev (Vite proxies /api); set to the backend's URL in production
+const API_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
+
 const STEPS = ['Rendering first page', 'Analyzing resume', 'Uploading PDF', 'Uploading preview', 'Saving review']
 
 const Upload = () => {
@@ -31,6 +34,9 @@ const Upload = () => {
     useEffect(() => {
         if(!isLoading && !auth.isAuthenticated) navigate('/auth?next=/upload')
     }, [isLoading, auth.isAuthenticated])
+
+    // wake the backend while the form is being filled in
+    useEffect(() => { fetch(`${API_URL}/api/health`).catch(() => {}) }, [])
 
     const isProcessing = steps !== null && !error
 
@@ -62,7 +68,7 @@ const Upload = () => {
         body.append('resume', file)
         body.append('jobTitle', jobTitle)
         body.append('jobDescription', jobDescription)
-        const res = await fetch('/api/analyze', { method: 'POST', body })
+        const res = await fetch(`${API_URL}/api/analyze`, { method: 'POST', body })
         if (!res.ok) {
             const detail = await res.json().then((d) => d.detail).catch(() => null)
             throw new Error(detail || `Analysis failed (${res.status}). Is the backend running?`)

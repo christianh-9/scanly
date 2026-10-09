@@ -3,6 +3,7 @@ from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, Field, ValidationError
@@ -16,6 +17,20 @@ BUSY_CODES = {429, 500, 503}
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 app = FastAPI(title="Scanly API")
+
+# the deployed frontend lives on another domain; list it in ALLOWED_ORIGINS (comma-separated)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+
+# the upload page pings this on load so a sleeping free-tier server wakes before the user submits
+@app.get("/api/health")
+def health() -> dict:
+    return {"ok": True}
 
 
 class AtsTip(BaseModel):

@@ -1,119 +1,148 @@
 # Scanly
 
-A modern application designed to analyze and improve your resume using cutting-edge techniques.
+Scanly reviews your resume the way a strict recruiter would. Upload a PDF, optionally paste the job you're applying for, and get an overall score, five category scores, and specific fixes, with low scores where they're earned.
 
-## Key Features & Benefits
+## Features
 
-- **Resume Analysis:** Upload your resume and receive a comprehensive score based on ATS compatibility, tone, content, and structure.
-- **ATS (Applicant Tracking System) Optimization:** Get specific tips to improve your resume's compatibility with ATS software.
-- **Detailed Feedback:**  Understand your resume's strengths and weaknesses with a breakdown of scores in key areas.
-- **Resume Examples:** Compare your resume to sample resumes to identify areas for improvement.
-- **Dockerized Deployment:** Easy to deploy and run using Docker.
-- **Modern UI:** Built with React, TypeScript, and TailwindCSS for a responsive and user-friendly experience.
+- **Scored against the job.** Add a company, job title and description and the review is tailored to that posting. Leave them blank for a general review.
+- **Blunt verdict.** An overall score out of 100 with a one-line verdict ("Needs work before you apply."), plus scores for ATS, tone and style, content, structure, and skills.
+- **Specific fixes first.** Each category lists what to fix before what's working, with an explanation for every tip. The weakest category opens first.
+- **Resume beside the feedback.** The review page shows your resume's first page next to the scores so you can check each point.
+- **Live analysis log.** Uploading shows each step (render, analyze, upload, save) with timings, and a clear error and retry if something fails.
+- **Review history.** Every review is saved to your account; reopen or delete any of them.
 
-## Prerequisites & Dependencies
+## Tech stack
 
-Before you begin, ensure you have the following installed:
+| Part | Built with |
+|---|---|
+| Frontend | React Router 7 (SPA mode), React 19, TypeScript, Tailwind CSS 4 |
+| Backend | FastAPI, Pydantic, Google Gen AI SDK |
+| AI | Gemini (`gemini-flash-latest`, falling back to `gemini-flash-lite-latest` when it's overloaded) |
+| Sign-in and storage | [Puter](https://puter.com) (puter.js): accounts, file storage, key-value store |
+| PDF rendering | pdf.js |
 
-- **Node.js:** (version 20 or higher)
-- **npm:** (Node Package Manager - comes with Node.js)
-- **Docker:** (for containerized deployment)
+## How it works
 
-## Installation & Setup Instructions
+1. The browser renders the PDF's first page to a PNG with pdf.js.
+2. The PDF and job details go to the FastAPI backend at `POST /api/analyze`, which sends the PDF to Gemini and validates the response against the feedback schema before returning it.
+3. The browser uploads the PDF and preview image to your Puter storage and saves the review in Puter's key-value store.
 
-1. **Clone the repository:**
+The Gemini API key lives only on the backend and is never sent to the browser.
 
-   ```bash
-   git clone git@github.com:christianh-9/scanly.git
-   cd scanly
-   ```
+## Getting started
 
-2. **Install dependencies:**
+### Prerequisites
 
-   ```bash
-   npm install
-   ```
+- Node.js 20+
+- Python 3.11+
+- A free Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
+- A Puter account (you can create one when you first sign in to Scanly)
 
-3. **Run in Development Mode (without Docker):**
+### 1. Install
 
-   Start the backend (FastAPI + Gemini) in one terminal:
+```bash
+git clone git@github.com:christianh-9/scanly.git
+cd scanly
+npm install
+```
 
-   ```bash
-   cd server
-   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-   cp .env.example .env   # then paste your Gemini key into .env
-   .venv/bin/uvicorn main:app --reload --port 8001
-   ```
+### 2. Start the backend
 
-   Start the frontend in another terminal:
+```bash
+cd server
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env    # then put your key in .env: GEMINI_API_KEY=...
+.venv/bin/uvicorn main:app --reload --port 8001
+```
 
-   ```bash
-   npm run dev
-   ```
+Leave this terminal running. API docs are at http://localhost:8001/docs.
 
-   Open http://localhost:5173. The dev server forwards `/api` requests to the backend.
+> Keep your key in `server/.env`, which is git-ignored. Never put it in `.env.example`.
 
-4. **Build and Run with Docker:**
+### 3. Start the frontend
 
-   ```bash
-   docker build -t scanly .
-   docker run -p 3000:3000 scanly
-   ```
+In a second terminal, from the project root:
 
-   This will build the Docker image and run the application in a container, accessible at `http://localhost:3000`.
+```bash
+npm run dev
+```
 
-## Usage Examples
+Open http://localhost:5173. The dev server forwards `/api` requests to the backend on port 8001.
 
-1. **Uploading a Resume:**
+## Tests
 
-   - Navigate to the main page.
-   - Use the "File Uploader" component to upload your resume in PDF format.
-   - The application will process the resume and display the analysis results.
+The backend has a self-check that fakes Gemini, so it uses no API quota:
 
-2. **Viewing Analysis Results:**
+```bash
+cd server
+.venv/bin/python test_main.py
+```
 
-   - The analysis results are displayed in several sections:
-      - **Overall Score:** A general score representing the quality of your resume.
-      - **ATS Score:** Indicates how well your resume will perform in Applicant Tracking Systems.
-      - **Tone and Style, Content, Structure:** Scores and tips related to these specific aspects of your resume.
+Type-check the frontend with:
 
-3. **Comparing with Example Resumes:**
-   -  The application provides several sample resumes for comparison. Analyze these resumes to get insights into effective resume writing.
+```bash
+npm run typecheck
+```
 
-## Configuration Options
+## Project structure
 
-The application can be configured through environment variables.  While the provided `Dockerfile` doesn't explicitly use environment variables for customization, you could modify the `Dockerfile` or the application's code to incorporate environment variables if needed.  Example:
+```
+app/
+  routes/        home (review history), upload, resume (review page), auth, wipe
+  components/    UI pieces: score summary, ATS panel, detail sections, delete dialog, icons
+  lib/           Puter wrapper, PDF-to-image, score helpers
+server/
+  main.py        FastAPI app and the /api/analyze endpoint
+  test_main.py   backend self-check
+DESIGN.md        design system (colors, type, components)
+PRODUCT.md       product goals and principles
+```
 
-   In `Dockerfile`, add:
-   ```dockerfile
-   ENV PORT=3000
-   ```
-   And in your node application:
-   ```typescript
-   const port = process.env.PORT || 3000;
-   ```
+## Troubleshooting
 
-## Contributing Guidelines
+- **"Gemini is overloaded right now"**: Gemini's free tier is busy. Wait a minute and try again.
+- **"Analysis failed… Is the backend running?"**: start the backend (step 2).
+- **`KeyError: 'GEMINI_API_KEY'` on backend start**: `server/.env` is missing or empty.
+- **`address already in use`**: another program is using the port. Pick a different one and update the proxy in `vite.config.ts` to match.
 
-Contributions are welcome! If you'd like to contribute to this project, please follow these guidelines:
+## Deployment
 
-1. **Fork the repository.**
-2. **Create a new branch for your feature or bug fix.**
-3. **Implement your changes.**
-4. **Write tests for your code.**
-5. **Submit a pull request.**
+The frontend and backend deploy separately, and both redeploy automatically on `git push`.
 
-Please ensure that your pull request includes:
+**Backend on [Render](https://render.com)** (free Web Service):
 
-- A clear description of the changes.
-- Test cases that cover the changes.
-- Updated documentation if necessary.
+| Setting | Value |
+|---|---|
+| Root Directory | `server` |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+| Environment | `GEMINI_API_KEY`, `PYTHON_VERSION=3.12.12`, `ALLOWED_ORIGINS=https://your-site.vercel.app` (comma-separate extra domains) |
 
-## License Information
+Free Render services sleep after 15 idle minutes. The upload page pings `/api/health` when it opens so the server is usually awake by the time you submit.
 
-This project has no specified license. All rights are reserved by the owner, christianh-9.
+**Frontend on [Vercel](https://vercel.com):** import the repo and set `VITE_API_URL` to the Render URL (for example `https://scanly-api.onrender.com`). Vite bakes this in at build time, so redeploy after changing it.
+
+### Docker
+
+The included `Dockerfile` builds and serves the frontend only:
+
+```bash
+docker build -t scanly .
+docker run -p 3000:3000 scanly
+```
+
+## Privacy
+
+Resumes are sent to Google Gemini for analysis. Files and reviews are stored in your own Puter account, and deleting a review removes its PDF and preview image too.
+
+## License
+
+No license has been specified. All rights reserved by christianh-9.
 
 ## Acknowledgments
 
-- This project utilizes the `pdfjs-dist` library for PDF parsing and rendering.
-- The UI is styled using TailwindCSS.
+- [pdf.js](https://mozilla.github.io/pdf.js/) for rendering PDFs
+- [Puter](https://puter.com) for sign-in and storage
+- [Google Gemini](https://ai.google.dev/) for analysis
+- Icons adapted from [Lucide](https://lucide.dev) (ISC)
