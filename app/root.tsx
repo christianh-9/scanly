@@ -26,15 +26,6 @@ export const links: Route.LinksFunction = () => [
   },
 ];
 
-const DESIGN_CONTRACT = `<!--
-THESIS: A blunt verdict, shown like a build result: the score and a plain sentence first, the evidence beside it. Refuses the pastel-gradient SaaS card grid with score rings.
-OWN-WORLD: Near-black ground, hairline #262626 borders, Geist and Geist Mono, white primary buttons, blue only for interaction, green/amber/red only for score bands, plus red on the destructive confirm button.
-STORY: The visitor uploads, watches an analysis log run like a deploy, reads a verdict they cannot misread, then checks it against their resume.
-FIRST VIEWPORT: Review page: resume preview left; right, the overall score huge in mono with a one-line verdict, five category bars beneath.
-FORM: Vercel product UI (user-pinned reference), seed 7d832dfe.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
--->`;
-
 export function Layout({ children }: { children: React.ReactNode }) {
   const { init } = usePuterStore()
 
@@ -51,7 +42,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body>
-        <template id="design-contract" dangerouslySetInnerHTML={{ __html: DESIGN_CONTRACT }} />
         <script src="https://js.puter.com/v2/"></script>
         {children}
         <ScrollRestoration />

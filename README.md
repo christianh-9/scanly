@@ -95,8 +95,6 @@ app/
 server/
   main.py        FastAPI app and the /api/analyze endpoint
   test_main.py   backend self-check
-DESIGN.md        design system (colors, type, components)
-PRODUCT.md       product goals and principles
 ```
 
 ## Troubleshooting

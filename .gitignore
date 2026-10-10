@@ -6,7 +6,3 @@
 /.react-router/
 /build/
 
-# design tool scratch files
-/.impeccable/review/
-/.impeccable/questions/
-/.impeccable/hook.cache.json
