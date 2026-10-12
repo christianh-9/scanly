@@ -6,3 +6,9 @@
 /.react-router/
 /build/
 
+
+# benchmark inputs (real resumes, never commit)
+/scripts/sample_resumes/
+
+# python bytecode
+__pycache__/

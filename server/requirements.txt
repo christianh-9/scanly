@@ -3,4 +3,3 @@ uvicorn[standard]
 python-multipart
 google-genai
 python-dotenv
-httpx
