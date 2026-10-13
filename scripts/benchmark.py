@@ -64,6 +64,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="http://localhost:8001")
     parser.add_argument("--passes", type=int, default=2, help="times to send each resume")
+    parser.add_argument("--interval", type=float, default=4.5,
+                        help="minimum seconds between request starts, to stay under per-minute rate limits "
+                             "(free tier: Flash-Lite 15/min -> 4.5, Flash 5/min -> 12.5). Waiting is not counted in timings.")
     args = parser.parse_args()
 
     pdfs = sorted(SAMPLES.glob("*.pdf"))
@@ -75,11 +78,13 @@ def main() -> None:
     print(f"{'run':>4}  {'file':<28} {'status':>6} {'total':>8} {'gemini':>8}  model (fallback)")
 
     with httpx.Client(timeout=300) as http:
-        run = 0
+        run, last_start = 0, float("-inf")
         for _ in range(args.passes):
             for pdf in pdfs:
                 run += 1
-                start = time.perf_counter()
+                # pace requests; this sleep happens before the timer starts, so it never inflates a measurement
+                time.sleep(max(0.0, args.interval - (time.perf_counter() - last_start)))
+                start = last_start = time.perf_counter()
                 r = http.post(
                     f"{args.url}/api/analyze",
                     files={"resume": (pdf.name, pdf.read_bytes(), "application/pdf")},
