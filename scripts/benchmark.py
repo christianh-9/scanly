@@ -63,55 +63,70 @@ def parse_server_timing(header: str) -> tuple[dict[str, float], dict[str, str]]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="http://localhost:8001")
+    parser.add_argument("--compare", help="second backend URL; requests alternate between --url and this one, "
+                                          "so Gemini's load changes hit both equally")
     parser.add_argument("--passes", type=int, default=2, help="times to send each resume")
     parser.add_argument("--interval", type=float, default=4.5,
                         help="minimum seconds between request starts, to stay under per-minute rate limits "
                              "(free tier: Flash-Lite 15/min -> 4.5, Flash 5/min -> 12.5). Waiting is not counted in timings.")
+    parser.add_argument("--save", type=Path, help="directory to save each response's JSON, for quality comparison")
     args = parser.parse_args()
 
     pdfs = sorted(SAMPLES.glob("*.pdf"))
     if not pdfs:
         raise SystemExit(f"No PDFs in {SAMPLES}")
+    targets = [args.url] + ([args.compare] if args.compare else [])
+    stats = {url: {"totals": [], "gemini": [], "fallbacks": 0, "failures": 0} for url in targets}
+    if args.save:
+        args.save.mkdir(parents=True, exist_ok=True)
 
-    totals, gemini_times, fallbacks, failures = [], [], 0, 0
-    print(f"{len(pdfs)} resumes x {args.passes} passes against {args.url}\n")
-    print(f"{'run':>4}  {'file':<28} {'status':>6} {'total':>8} {'gemini':>8}  model (fallback)")
+    print(f"{len(pdfs)} resumes x {args.passes} passes against {', '.join(targets)}\n")
+    print(f"{'run':>4}  {'file':<28} {'target':<6} {'status':>6} {'total':>8} {'gemini':>8}  input  model (fallback)")
 
     with httpx.Client(timeout=300) as http:
         run, last_start = 0, float("-inf")
-        for _ in range(args.passes):
+        for p in range(args.passes):
             for pdf in pdfs:
-                run += 1
-                # pace requests; this sleep happens before the timer starts, so it never inflates a measurement
-                time.sleep(max(0.0, args.interval - (time.perf_counter() - last_start)))
-                start = last_start = time.perf_counter()
-                r = http.post(
-                    f"{args.url}/api/analyze",
-                    files={"resume": (pdf.name, pdf.read_bytes(), "application/pdf")},
-                    data={"jobTitle": JOB_TITLE, "jobDescription": JOB_DESCRIPTION},
-                )
-                elapsed = time.perf_counter() - start
+                for t, url in enumerate(targets):
+                    run += 1
+                    label = "A" if t == 0 else "B"
+                    s = stats[url]
+                    # pace requests; this sleep happens before the timer starts, so it never inflates a measurement
+                    time.sleep(max(0.0, args.interval - (time.perf_counter() - last_start)))
+                    start = last_start = time.perf_counter()
+                    r = http.post(
+                        f"{url}/api/analyze",
+                        files={"resume": (pdf.name, pdf.read_bytes(), "application/pdf")},
+                        data={"jobTitle": JOB_TITLE, "jobDescription": JOB_DESCRIPTION},
+                    )
+                    elapsed = time.perf_counter() - start
 
-                if r.status_code != 200:
-                    failures += 1
-                    print(f"{run:>4}  {pdf.name[:28]:<28} {r.status_code:>6} {elapsed:>7.1f}s {'':>8}  {r.text[:60]}")
-                    continue
+                    if r.status_code != 200:
+                        s["failures"] += 1
+                        print(f"{run:>4}  {pdf.name[:28]:<28} {label:<6} {r.status_code:>6} {elapsed:>7.1f}s {'':>8}  {r.text[:60]}")
+                        continue
 
-                steps, descs = parse_server_timing(r.headers.get("server-timing", ""))
-                totals.append(elapsed)
-                gemini_times.append(steps.get("gemini", 0.0))
-                fallback = descs.get("fallback", "")
-                if fallback:
-                    fallbacks += 1
-                model = descs.get("model", "?") + (f"  (skipped {fallback})" if fallback else "")
-                print(f"{run:>4}  {pdf.name[:28]:<28} {r.status_code:>6} {elapsed:>7.1f}s {steps.get('gemini', 0):>7.1f}s  {model}")
+                    steps, descs = parse_server_timing(r.headers.get("server-timing", ""))
+                    s["totals"].append(elapsed)
+                    s["gemini"].append(steps.get("gemini", 0.0))
+                    fallback = descs.get("fallback", "")
+                    if fallback:
+                        s["fallbacks"] += 1
+                    if args.save:
+                        (args.save / f"{label}-pass{p + 1}-{pdf.stem}.json").write_text(r.text)
+                    model = descs.get("model", "?") + (f"  (skipped {fallback})" if fallback else "")
+                    print(f"{run:>4}  {pdf.name[:28]:<28} {label:<6} {r.status_code:>6} {elapsed:>7.1f}s "
+                          f"{steps.get('gemini', 0):>7.1f}s  {descs.get('input', '-'):<5}  {model}")
 
     print()
-    if totals:
-        t, g = summarize(totals), summarize(gemini_times)
-        print(f"total   median {t['median']:.1f}s   p90 {t['p90']:.1f}s   (n={len(totals)})")
-        print(f"gemini  median {g['median']:.1f}s   p90 {g['p90']:.1f}s")
-    print(f"fallback runs: {fallbacks}   failed runs: {failures}")
+    for t, url in enumerate(targets):
+        s = stats[url]
+        print(f"[{'A' if t == 0 else 'B'}] {url}")
+        if s["totals"]:
+            tot, gem = summarize(s["totals"]), summarize(s["gemini"])
+            print(f"    total   median {tot['median']:.1f}s   p90 {tot['p90']:.1f}s   (n={len(s['totals'])})")
+            print(f"    gemini  median {gem['median']:.1f}s   p90 {gem['p90']:.1f}s")
+        print(f"    fallback runs: {s['fallbacks']}   failed runs: {s['failures']}")
 
 
 if __name__ == "__main__":

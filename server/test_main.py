@@ -124,3 +124,83 @@ def test_health():
 def test_cors(origin, allowed):
     r = api.options("/api/analyze", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
     assert (r.headers.get("access-control-allow-origin") == origin) is allowed
+
+
+# --- Phase 1: text extraction -------------------------------------------------
+
+def make_pdf(*pages: str) -> bytes:
+    """Build a real PDF in memory; an empty string makes a page with no text (like a scanned image)."""
+    import pymupdf
+    doc = pymupdf.open()
+    for text in pages:
+        page = doc.new_page()
+        if text:
+            page.insert_textbox(pymupdf.Rect(72, 72, 540, 720), text)  # wraps long text instead of clipping it
+    return doc.tobytes()
+
+
+def test_extract_text_single_page():
+    assert main.extract_text(make_pdf("Jane Doe, Software Engineer")) == "Jane Doe, Software Engineer"
+
+
+def test_extract_text_keeps_pages_apart():
+    text = main.extract_text(make_pdf("Page one ends here", "Page two starts here"))
+    assert "Page one ends here" in text and "Page two starts here" in text
+    assert "herePage" not in text  # pages must not run together
+
+
+def test_extract_text_no_text_layer_returns_empty():
+    assert main.extract_text(make_pdf("")) == ""
+
+
+def test_extract_text_corrupt_pdf_raises():
+    with pytest.raises(Exception):
+        main.extract_text(b"%PDF-1.4 this is not really a pdf")
+
+
+def capture(monkeypatch_target):
+    """Fake Gemini that records what it was sent and replies with valid feedback."""
+    sent = {}
+
+    async def generate_content(contents, **_):
+        sent["contents"] = contents
+        return SimpleNamespace(text=json.dumps(GOOD))
+
+    monkeypatch_target(generate_content)
+    return sent
+
+
+RESUME = "Jane Doe. Software Engineer at Acme building React and Python services. " * 5  # > MIN_TEXT_CHARS
+
+
+def test_text_resume_sends_text_not_pdf(fake_gemini):
+    sent = capture(fake_gemini)
+    r = api.post("/api/analyze", files={"resume": ("r.pdf", make_pdf(RESUME), "application/pdf")})
+    assert r.status_code == 200
+    first = sent["contents"][0]
+    assert isinstance(first, str) and "Jane Doe" in first
+    assert 'input;desc="text"' in r.headers["server-timing"]
+    assert "extract;dur=" in r.headers["server-timing"]
+
+
+def test_scanned_resume_falls_back_to_pdf(fake_gemini):
+    sent = capture(fake_gemini)
+    r = api.post("/api/analyze", files={"resume": ("r.pdf", make_pdf(""), "application/pdf")})
+    assert r.status_code == 200
+    assert not isinstance(sent["contents"][0], str)  # a PDF Part, not text
+    assert 'input;desc="pdf"' in r.headers["server-timing"]
+
+
+def test_unreadable_pdf_falls_back_to_pdf(fake_gemini):
+    sent = capture(fake_gemini)
+    r = api.post("/api/analyze", files=PDF)  # b"%PDF-1.4": not a real PDF
+    assert r.status_code == 200
+    assert not isinstance(sent["contents"][0], str)
+
+
+def test_resume_input_pdf_forces_pdf(fake_gemini, monkeypatch):
+    monkeypatch.setattr(main, "RESUME_INPUT", "pdf")
+    sent = capture(fake_gemini)
+    r = api.post("/api/analyze", files={"resume": ("r.pdf", make_pdf(RESUME), "application/pdf")})
+    assert r.status_code == 200
+    assert not isinstance(sent["contents"][0], str)

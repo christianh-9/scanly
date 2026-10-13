@@ -3,6 +3,7 @@ import os
 import time
 from typing import Literal
 
+import pymupdf
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,10 @@ MAX_PDF_BYTES = 20 * 1024 * 1024  # matches the limit in FileUploader.tsx
 # GEMINI_MODELS overrides the order (comma-separated), e.g. "gemini-flash-latest" alone to benchmark Flash without fallback.
 MODELS = [m.strip() for m in os.environ.get("GEMINI_MODELS", "gemini-flash-latest,gemini-flash-lite-latest").split(",") if m.strip()]
 BUSY_CODES = {429, 500, 503}
+# "auto": send extracted text when the PDF has enough of it, else the PDF itself. "pdf": always send the PDF
+# (the pre-Phase-1 behaviour; used for side-by-side benchmarks and as an instant rollback).
+RESUME_INPUT = os.environ.get("RESUME_INPUT", "auto")
+MIN_TEXT_CHARS = 200  # less than this means a scanned/image-only PDF, so Gemini needs to see the page itself
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 app = FastAPI(title="Scanly API")
@@ -78,6 +83,24 @@ Job title: {job_title or "(not provided)"}
 Job description: {job_description or "(not provided)"}"""
 
 
+def extract_text(pdf: bytes) -> str:
+    """Return all the text in a PDF, page by page, as one string ("" if there is none).
+
+    Used to send Gemini plain text instead of the whole PDF. A scanned resume (just an image of the page)
+    has no text layer, so this returns "" or almost nothing, and the caller falls back to sending the PDF.
+
+    TODO:
+    - open the PDF from bytes, not from a file path: pymupdf.open(stream=pdf, filetype="pdf")
+    - loop over the pages; page.get_text() returns that page's text
+    - join the pages with a newline so words from different pages don't run together
+    - strip leading/trailing whitespace from the result
+    - close the document when done (a `with` block does this for you)
+    - a corrupt or non-PDF file makes pymupdf.open raise; let that propagate, the caller handles it
+    """
+    with pymupdf.open(stream=pdf, filetype="pdf") as doc:
+        return "\n".join(page.get_text() for page in doc).strip()
+
+
 @app.post("/api/analyze", response_model=Feedback)
 async def analyze(
     response: Response,
@@ -102,16 +125,23 @@ async def analyze(
         raise HTTPException(413, "Resume must be 20 MB or smaller")
     lap("validate")
 
+    text = ""
+    if RESUME_INPUT != "pdf":
+        try:
+            text = extract_text(pdf)
+        except Exception as e:  # unreadable PDF: let Gemini try the file itself
+            log.info(f"text extraction failed, sending PDF: {e}")
+    send_text = len(text) >= MIN_TEXT_CHARS
+    resume_part = f"Resume text:\n{text}" if send_text else types.Part.from_bytes(data=pdf, mime_type="application/pdf")
+    lap("extract")
+
     result = None
     skipped: list[str] = []  # models that were busy before one answered, e.g. ["gemini-flash-latest:503"]
     for model in MODELS:
         try:
             result = await client.aio.models.generate_content(
                 model=model,
-                contents=[
-                    types.Part.from_bytes(data=pdf, mime_type="application/pdf"),
-                    build_prompt(jobTitle, jobDescription),
-                ],
+                contents=[resume_part, build_prompt(jobTitle, jobDescription)],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_json_schema=Feedback.model_json_schema(),
@@ -139,10 +169,12 @@ async def analyze(
     fallback = "|".join(skipped)  # "|" not ",": commas separate Server-Timing entries
     log.info(
         "analyze " + " ".join(f"{k}={v:.3f}s" for k, v in timings.items())
-        + f" total={total:.3f}s model={model}" + (f" fallback={fallback}" if fallback else "")
+        + f" total={total:.3f}s model={model} input={'text' if send_text else 'pdf'}"
+        + (f" fallback={fallback}" if fallback else "")
     )
     # standard header (shows in browser DevTools); durations in milliseconds, the model that answered in desc
-    entries = [f"{k};dur={v * 1000:.1f}" for k, v in timings.items()] + [f'model;desc="{model}"']
+    entries = [f"{k};dur={v * 1000:.1f}" for k, v in timings.items()] + [
+        f'model;desc="{model}"', f'input;desc="{"text" if send_text else "pdf"}"']
     if fallback:
         entries.append(f'fallback;desc="{fallback}"')
     response.headers["Server-Timing"] = ", ".join(entries)
