@@ -43,6 +43,7 @@ def test_valid_analysis(fake_gemini):
     fake_gemini(replies(json.dumps(GOOD)))
     r = api.post("/api/analyze", files=PDF, data={"jobTitle": "Dev"})
     assert r.status_code == 200, r.text
+    # overall comes from the first call's holistic judgement (GOOD says 75), not the section average (78)
     assert r.json()["overallScore"] == 75
 
 
@@ -76,10 +77,10 @@ def test_falls_back_when_primary_model_busy(fake_gemini):
     fake_gemini(flaky)
     r = api.post("/api/analyze", files=PDF)
     assert r.status_code == 200
-    assert calls == main.MODELS
-    # the header names the model that answered and why the first one was skipped, so benchmarks can flag fallback runs
+    # one group hit the busy error and retried on the fallback model; the other answered first time
+    assert calls.count(main.MODELS[1]) == 1
     timing = r.headers["server-timing"]
-    assert f'model;desc="{main.MODELS[1]}"' in timing
+    assert main.MODELS[1] in timing.split('model;desc="')[1].split('"')[0]
     assert f'fallback;desc="{main.MODELS[0]}:503"' in timing
 
 
@@ -99,7 +100,7 @@ def test_pinned_single_model_busy_is_503_not_silent_fallback(fake_gemini, monkey
 
     fake_gemini(busy)
     assert api.post("/api/analyze", files=PDF).status_code == 503
-    assert calls == ["gemini-flash-latest"]
+    assert calls == ["gemini-flash-latest"] * len(main.GROUPS)  # each group tried Flash once, none fell back
 
 
 def test_all_models_busy_is_friendly_503(fake_gemini):
@@ -212,4 +213,75 @@ def test_token_counts_in_header(fake_gemini):
         return SimpleNamespace(text=json.dumps(GOOD), usage_metadata=usage)
 
     fake_gemini(with_usage)
-    assert 'tokens;desc="in=900 out=700 think=1200"' in api.post("/api/analyze", files=PDF).headers["server-timing"]
+    # summed across the parallel calls
+    n = len(main.GROUPS)
+    assert (f'tokens;desc="in={900 * n} out={700 * n} think={1200 * n} calls={n}"'
+            in api.post("/api/analyze", files=PDF).headers["server-timing"])
+
+
+# --- Phase 3: parallel calls --------------------------------------------------
+
+def test_groups_cover_every_section_exactly_once():
+    flat = [k for g in main.GROUPS for k in g]
+    assert sorted(flat) == sorted(["ATS", "toneAndStyle", "content", "structure", "skills"])
+
+
+def test_each_call_asks_only_for_its_group(fake_gemini):
+    asked = []
+
+    async def record(config, **_):
+        asked.append(sorted(config.response_json_schema["properties"]))
+        return SimpleNamespace(text=json.dumps(GOOD))
+
+    fake_gemini(record)
+    assert api.post("/api/analyze", files=PDF).status_code == 200
+    expected = [sorted(["overallScore", *main.GROUPS[0]])] + [sorted(g) for g in main.GROUPS[1:]]
+    assert sorted(asked) == sorted(expected)
+
+
+def test_calls_run_in_parallel(fake_gemini):
+    """Each fake call waits until every group's call has started. Run one after another, the first call
+    would wait forever (the test times out instead); run in parallel, they all start and finish."""
+    import asyncio
+    started, everyone_started = 0, asyncio.Event()
+
+    async def wait_for_others(**_):
+        nonlocal started
+        started += 1
+        if started == len(main.GROUPS):
+            everyone_started.set()
+        await asyncio.wait_for(everyone_started.wait(), timeout=2)
+        return SimpleNamespace(text=json.dumps(GOOD))
+
+    fake_gemini(wait_for_others)
+    assert api.post("/api/analyze", files=PDF).status_code == 200
+    assert started == len(main.GROUPS)
+
+
+def test_one_group_failing_fails_the_whole_request_clearly(fake_gemini):
+    # the group that includes "structure" is always busy; the other succeeds. The response must be a clear
+    # 503, never a 200 with sections missing.
+    async def structure_busy(config, **_):
+        if "structure" in config.response_json_schema["properties"]:
+            raise BUSY
+        return SimpleNamespace(text=json.dumps(GOOD))
+
+    fake_gemini(structure_busy)
+    r = api.post("/api/analyze", files=PDF)
+    assert r.status_code == 503
+    assert "overloaded" in r.json()["detail"]
+
+
+def test_one_group_bad_json_is_502(fake_gemini):
+    async def half_garbage(config, **_):
+        if "skills" in config.response_json_schema["properties"]:
+            return SimpleNamespace(text="not json")
+        return SimpleNamespace(text=json.dumps(GOOD))
+
+    fake_gemini(half_garbage)
+    assert api.post("/api/analyze", files=PDF).status_code == 502
+
+
+def test_overall_falls_back_to_average_when_missing(fake_gemini):
+    no_overall = {k: v for k, v in GOOD.items() if k != "overallScore"}
+    assert main.combine(no_overall).overallScore == 78  # (70 + 80 * 4) / 5

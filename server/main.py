@@ -1,7 +1,11 @@
+import asyncio
+import json
 import logging
 import os
+import statistics
 import time
-from typing import Literal
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import pymupdf
 from dotenv import load_dotenv
@@ -104,6 +108,83 @@ def extract_text(pdf: bytes) -> str:
         return "\n".join(page.get_text() for page in doc).strip()
 
 
+# Sections scored together in one Gemini call; the groups run in parallel. Fewer groups = fewer API calls,
+# more groups = less output per call (faster) but more calls per analysis against the per-minute rate limit.
+# [[all five]] is one call; [["ATS"], ["toneAndStyle"], ...] is one call per section.
+GROUPS = [["ATS", "toneAndStyle", "content"], ["structure", "skills"]]
+# The first group also returns overallScore: the model's judgement of the whole resume, which is harsher on weak or
+# mismatched resumes than an average of section scores (measured: a mismatched resume averaged ~50 vs ~37 holistic).
+
+
+@dataclass
+class GroupResult:
+    sections: dict[str, Any]
+    model: str
+    skipped: list[str]
+    usage: Any
+    seconds: float
+
+
+def group_schema(fields: list[str]) -> dict:
+    """The Feedback JSON schema cut down to just these fields."""
+    full = Feedback.model_json_schema()
+    return {**full, "properties": {k: full["properties"][k] for k in fields}, "required": list(fields)}
+
+
+async def score_group(group: list[str], resume_part: Any, prompt: str, with_overall: bool = False) -> GroupResult:
+    """Score one group of sections, trying each model in MODELS until one isn't busy.
+
+    Raises HTTPException (503 if every model was busy, 502 for any other failure) so the caller can fail the
+    whole request clearly instead of returning a review with sections missing.
+    """
+    start = time.perf_counter()
+    skipped: list[str] = []
+    fields = ["overallScore", *group] if with_overall else group
+    ask = f"{prompt}\nOnly return these sections: {', '.join(group)}."
+    if with_overall:
+        ask += " Also return overallScore: your overall judgement of the whole resume for this job, not an average."
+    for model in MODELS:
+        try:
+            result = await client.aio.models.generate_content(
+                model=model,
+                contents=[resume_part, ask],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_json_schema=group_schema(fields),
+                ),
+            )
+        except errors.APIError as e:
+            if e.code not in BUSY_CODES:
+                raise HTTPException(502, f"AI request failed: {e.message or e}")
+            skipped.append(f"{model}:{e.code}")
+            continue
+        except Exception as e:
+            raise HTTPException(502, f"AI request failed: {e}")
+        try:
+            data = json.loads(result.text or "")
+        except json.JSONDecodeError:
+            raise HTTPException(502, "AI returned feedback in an unexpected format, please try again")
+        if not isinstance(data, dict):
+            raise HTTPException(502, "AI returned feedback in an unexpected format, please try again")
+        sections = {k: data.get(k) for k in fields}  # ignore anything outside this group
+        return GroupResult(sections, model, skipped, getattr(result, "usage_metadata", None), time.perf_counter() - start)
+    log.info(f"group {'+'.join(group)} failed: all models busy ({', '.join(skipped)})")
+    raise HTTPException(503, "Gemini is overloaded right now. Wait a minute and try again.")
+
+
+def combine(sections: dict[str, Any]) -> Feedback:
+    """Validate each section and build the Feedback the frontend expects.
+
+    overallScore comes from the first group's call; if it's missing, fall back to the average of the sections.
+    """
+    sections = dict(sections)
+    overall = sections.pop("overallScore", None)
+    parsed = {k: Feedback.model_fields[k].annotation.model_validate(v) for k, v in sections.items()}
+    if overall is None:
+        overall = round(statistics.mean(section.score for section in parsed.values()))
+    return Feedback(overallScore=overall, **parsed)
+
+
 @app.post("/api/analyze", response_model=Feedback)
 async def analyze(
     response: Response,
@@ -138,51 +219,43 @@ async def analyze(
     resume_part = f"Resume text:\n{text}" if send_text else types.Part.from_bytes(data=pdf, mime_type="application/pdf")
     lap("extract")
 
-    result = None
-    skipped: list[str] = []  # models that were busy before one answered, e.g. ["gemini-flash-latest:503"]
-    for model in MODELS:
-        try:
-            result = await client.aio.models.generate_content(
-                model=model,
-                contents=[resume_part, build_prompt(jobTitle, jobDescription)],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_json_schema=Feedback.model_json_schema(),
-                ),
-            )
-            break
-        except errors.APIError as e:
-            if e.code not in BUSY_CODES:
-                raise HTTPException(502, f"AI request failed: {e.message or e}")
-            skipped.append(f"{model}:{e.code}")
-        except Exception as e:
-            raise HTTPException(502, f"AI request failed: {e}")
-    if result is None:
-        log.info(f"analyze failed: all models busy ({', '.join(skipped)})")
-        raise HTTPException(503, "Gemini is overloaded right now. Wait a minute and try again.")
+    # all groups at once: the wait is roughly the slowest group, not the sum of them
+    outcomes = await asyncio.gather(
+        *(score_group(group, resume_part, build_prompt(jobTitle, jobDescription), with_overall=(i == 0))
+          for i, group in enumerate(GROUPS)),
+        return_exceptions=True,
+    )
+    failed = [o for o in outcomes if isinstance(o, BaseException)]
+    if failed:
+        log.info(f"analyze failed: {len(failed)}/{len(GROUPS)} parallel calls failed: {failed[0]}")
+        first = failed[0]
+        raise first if isinstance(first, HTTPException) else HTTPException(502, f"AI request failed: {first}")
     lap("gemini")
 
     try:
-        feedback = Feedback.model_validate_json(result.text or "")
-    except ValidationError:
+        feedback = combine({k: v for o in outcomes for k, v in o.sections.items()})
+    except (ValidationError, TypeError, AttributeError):
         raise HTTPException(502, "AI returned feedback in an unexpected format, please try again")
     lap("parse")
 
     total = sum(timings.values())
+    models = "|".join(dict.fromkeys(o.model for o in outcomes))  # unique, in order
+    fallback = "|".join(x for o in outcomes for x in o.skipped)  # "|" not ",": commas separate Server-Timing entries
     # output (and hidden "thinking") tokens are generated one by one, so they drive most of the Gemini time
-    usage = getattr(result, "usage_metadata", None)
-    tokens = (f"in={usage.prompt_token_count or 0} out={usage.candidates_token_count or 0} "
-              f"think={usage.thoughts_token_count or 0}") if usage else ""
-    fallback = "|".join(skipped)  # "|" not ",": commas separate Server-Timing entries
+    usages = [o.usage for o in outcomes if o.usage]
+    tokens = (f"in={sum(u.prompt_token_count or 0 for u in usages)} out={sum(u.candidates_token_count or 0 for u in usages)} "
+              f"think={sum(u.thoughts_token_count or 0 for u in usages)} calls={len(outcomes)}") if usages else ""
     log.info(
         "analyze " + " ".join(f"{k}={v:.3f}s" for k, v in timings.items())
-        + f" total={total:.3f}s model={model} input={'text' if send_text else 'pdf'}"
+        + f" total={total:.3f}s model={models} input={'text' if send_text else 'pdf'}"
+        + " calls=[" + " ".join(f"{'+'.join(o.sections)}:{o.seconds:.2f}s" for o in outcomes) + "]"
         + (f" tokens[{tokens}]" if tokens else "")
         + (f" fallback={fallback}" if fallback else "")
     )
-    # standard header (shows in browser DevTools); durations in milliseconds, the model that answered in desc
-    entries = [f"{k};dur={v * 1000:.1f}" for k, v in timings.items()] + [
-        f'model;desc="{model}"', f'input;desc="{"text" if send_text else "pdf"}"']
+    # standard header (shows in browser DevTools); durations in milliseconds; desc carries labels
+    entries = [f"{k};dur={v * 1000:.1f}" for k, v in timings.items()]
+    entries += [f"call{i + 1};dur={o.seconds * 1000:.1f};desc=\"{'+'.join(o.sections)}\"" for i, o in enumerate(outcomes)]
+    entries += [f'model;desc="{models}"', f'input;desc="{"text" if send_text else "pdf"}"']
     if fallback:
         entries.append(f'fallback;desc="{fallback}"')
     if tokens:
