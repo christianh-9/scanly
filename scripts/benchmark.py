@@ -76,12 +76,12 @@ def main() -> None:
     if not pdfs:
         raise SystemExit(f"No PDFs in {SAMPLES}")
     targets = [args.url] + ([args.compare] if args.compare else [])
-    stats = {url: {"totals": [], "gemini": [], "fallbacks": 0, "failures": 0} for url in targets}
+    stats = {url: {"totals": [], "gemini": [], "out": [], "think": [], "fallbacks": 0, "failures": 0} for url in targets}
     if args.save:
         args.save.mkdir(parents=True, exist_ok=True)
 
     print(f"{len(pdfs)} resumes x {args.passes} passes against {', '.join(targets)}\n")
-    print(f"{'run':>4}  {'file':<28} {'target':<6} {'status':>6} {'total':>8} {'gemini':>8}  input  model (fallback)")
+    print(f"{'run':>4}  {'file':<28} {'target':<6} {'status':>6} {'total':>8} {'gemini':>8}  input  {'tokens':<28} model (fallback)")
 
     with httpx.Client(timeout=300) as http:
         run, last_start = 0, float("-inf")
@@ -109,6 +109,10 @@ def main() -> None:
                     steps, descs = parse_server_timing(r.headers.get("server-timing", ""))
                     s["totals"].append(elapsed)
                     s["gemini"].append(steps.get("gemini", 0.0))
+                    tok = dict(kv.split("=") for kv in descs.get("tokens", "").split()) if descs.get("tokens") else {}
+                    if tok:
+                        s["out"].append(int(tok["out"]))
+                        s["think"].append(int(tok["think"]))
                     fallback = descs.get("fallback", "")
                     if fallback:
                         s["fallbacks"] += 1
@@ -116,7 +120,7 @@ def main() -> None:
                         (args.save / f"{label}-pass{p + 1}-{pdf.stem}.json").write_text(r.text)
                     model = descs.get("model", "?") + (f"  (skipped {fallback})" if fallback else "")
                     print(f"{run:>4}  {pdf.name[:28]:<28} {label:<6} {r.status_code:>6} {elapsed:>7.1f}s "
-                          f"{steps.get('gemini', 0):>7.1f}s  {descs.get('input', '-'):<5}  {model}")
+                          f"{steps.get('gemini', 0):>7.1f}s  {descs.get('input', '-'):<5}  {descs.get('tokens', '-'):<28} {model}")
 
     print()
     for t, url in enumerate(targets):
@@ -126,6 +130,8 @@ def main() -> None:
             tot, gem = summarize(s["totals"]), summarize(s["gemini"])
             print(f"    total   median {tot['median']:.1f}s   p90 {tot['p90']:.1f}s   (n={len(s['totals'])})")
             print(f"    gemini  median {gem['median']:.1f}s   p90 {gem['p90']:.1f}s")
+        if s["out"]:
+            print(f"    tokens  median output {statistics.median(s['out']):.0f}   median thinking {statistics.median(s['think']):.0f}")
         print(f"    fallback runs: {s['fallbacks']}   failed runs: {s['failures']}")
 
 

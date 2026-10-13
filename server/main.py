@@ -74,10 +74,13 @@ class Feedback(BaseModel):
 
 
 def build_prompt(job_title: str, job_description: str) -> str:
+    # Output is generated token by token, so its length drives response time: keep tips short and the JSON compact.
     return f"""You are an expert in ATS (Applicant Tracking System) and resume analysis.
 Analyze and rate this resume and suggest how to improve it.
-The rating can be low if the resume is bad. Be thorough and point out mistakes.
-Give 3-4 tips per section. For tips with an explanation, keep "tip" a short title and put the detail in "explanation".
+The rating can be low if the resume is bad. Point out the most important mistakes.
+Give exactly 3 tips per section. "tip" is a short title of at most 8 words.
+"explanation" is one sentence of at most 20 words.
+Return compact JSON on a single line, with no indentation or line breaks.
 If provided, take the job into consideration.
 Job title: {job_title or "(not provided)"}
 Job description: {job_description or "(not provided)"}"""
@@ -166,10 +169,15 @@ async def analyze(
     lap("parse")
 
     total = sum(timings.values())
+    # output (and hidden "thinking") tokens are generated one by one, so they drive most of the Gemini time
+    usage = getattr(result, "usage_metadata", None)
+    tokens = (f"in={usage.prompt_token_count or 0} out={usage.candidates_token_count or 0} "
+              f"think={usage.thoughts_token_count or 0}") if usage else ""
     fallback = "|".join(skipped)  # "|" not ",": commas separate Server-Timing entries
     log.info(
         "analyze " + " ".join(f"{k}={v:.3f}s" for k, v in timings.items())
         + f" total={total:.3f}s model={model} input={'text' if send_text else 'pdf'}"
+        + (f" tokens[{tokens}]" if tokens else "")
         + (f" fallback={fallback}" if fallback else "")
     )
     # standard header (shows in browser DevTools); durations in milliseconds, the model that answered in desc
@@ -177,5 +185,7 @@ async def analyze(
         f'model;desc="{model}"', f'input;desc="{"text" if send_text else "pdf"}"']
     if fallback:
         entries.append(f'fallback;desc="{fallback}"')
+    if tokens:
+        entries.append(f'tokens;desc="{tokens}"')
     response.headers["Server-Timing"] = ", ".join(entries)
     return feedback

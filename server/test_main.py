@@ -204,3 +204,12 @@ def test_resume_input_pdf_forces_pdf(fake_gemini, monkeypatch):
     r = api.post("/api/analyze", files={"resume": ("r.pdf", make_pdf(RESUME), "application/pdf")})
     assert r.status_code == 200
     assert not isinstance(sent["contents"][0], str)
+
+
+def test_token_counts_in_header(fake_gemini):
+    async def with_usage(**_):
+        usage = SimpleNamespace(prompt_token_count=900, candidates_token_count=700, thoughts_token_count=1200)
+        return SimpleNamespace(text=json.dumps(GOOD), usage_metadata=usage)
+
+    fake_gemini(with_usage)
+    assert 'tokens;desc="in=900 out=700 think=1200"' in api.post("/api/analyze", files=PDF).headers["server-timing"]
