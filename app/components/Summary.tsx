@@ -9,7 +9,8 @@ const CATEGORIES = [
 ] as const
 
 // The verdict: overall score, one plain sentence, then the five category bars.
-const Summary = ({ feedback }: { feedback: Feedback }) => {
+// `where` finishes the flagged-changes line: "below" on a review page, elsewhere when previewed out of context
+const Summary = ({ feedback, where = 'below' }: { feedback: Feedback; where?: string }) => {
     const score = feedback.overallScore
     const tone = scoreTone(score)
     const improveCount = CATEGORIES.reduce(
@@ -26,7 +27,7 @@ const Summary = ({ feedback }: { feedback: Feedback }) => {
                 </p>
                 <h2 id="verdict" className="mt-3 text-2xl font-semibold tracking-tight text-balance">{verdict(score)}</h2>
                 <p className="mt-1 text-sm text-muted">
-                    {improveCount === 0 ? 'No changes flagged.' : `${improveCount} ${improveCount === 1 ? 'change' : 'changes'} flagged below.`}
+                    {improveCount === 0 ? 'No changes flagged.' : `${improveCount} ${improveCount === 1 ? 'change' : 'changes'} flagged ${where}.`}
                 </p>
             </div>
 

@@ -1,10 +1,11 @@
 import type { Route } from "./+types/home";
 import NavBar from "~/components/NavBar";
 import ResumeCard from "~/components/ResumeCard";
+import Landing from "~/components/Landing";
 import { UploadIcon } from "~/components/Icons";
 import { useEffect, useState } from "react";
 import { usePuterStore } from "~/lib/puter";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -15,13 +16,8 @@ export function meta({}: Route.MetaArgs) {
 
 export default function Home() {
     const { auth, isLoading, kv } = usePuterStore();
-    const navigate = useNavigate()
     const [resumes, setResumes] = useState<Resume[]>([])
     const [loadingResumes, setLoadingResumes] = useState(true)
-
-    useEffect(() => {
-      if(!isLoading && !auth.isAuthenticated) navigate('/auth?next=/')
-    }, [isLoading, auth.isAuthenticated])
 
     useEffect(() => {
       if(!auth.isAuthenticated) return
@@ -43,6 +39,11 @@ export default function Home() {
     }, [auth.isAuthenticated])
 
   const removeResume = (id: string) => setResumes((all) => all.filter((r) => r.id !== id))
+
+  // signed-out visitors get the front page instead of a sign-in wall
+  if (!isLoading && !auth.isAuthenticated) {
+    return <main className="min-h-screen"><NavBar/><Landing/></main>
+  }
 
   return <main className="min-h-screen">
     <NavBar/>

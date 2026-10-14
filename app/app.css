@@ -98,6 +98,27 @@ a {
   animation: bar-fill 900ms var(--ease-out-expo) both;
 }
 
+/* landing hero: one scan pass down the sample resume, echoing the logo's scan line */
+@keyframes scan {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(260%);
+    opacity: 0;
+  }
+}
+.scan-line {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 40%;
+  border-bottom: 2px solid var(--color-accent);
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--color-accent) 22%, transparent));
+  animation: scan 1.8s var(--ease-out-expo) 0.2s both;
+  pointer-events: none;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -107,5 +128,8 @@ a {
 @media (prefers-reduced-motion: reduce) {
   .bar-fill {
     animation: none;
+  }
+  .scan-line {
+    display: none;
   }
 }
