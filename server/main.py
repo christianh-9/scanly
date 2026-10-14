@@ -22,9 +22,10 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("scanly")
 
 MAX_PDF_BYTES = 20 * 1024 * 1024  # matches the limit in FileUploader.tsx
-# aliases track the current models, so they won't get retired under us; lite is the fallback when Flash is overloaded.
+# Aliases track the current models, so they won't get retired under us. Flash-Lite is primary: faster (~2 s median in
+# benchmarks) and a much larger free-tier quota (500/day vs Flash's 20/day); Flash is the fallback when it's busy.
 # GEMINI_MODELS overrides the order (comma-separated), e.g. "gemini-flash-latest" alone to benchmark Flash without fallback.
-MODELS = [m.strip() for m in os.environ.get("GEMINI_MODELS", "gemini-flash-latest,gemini-flash-lite-latest").split(",") if m.strip()]
+MODELS = [m.strip() for m in os.environ.get("GEMINI_MODELS", "gemini-flash-lite-latest,gemini-flash-latest").split(",") if m.strip()]
 BUSY_CODES = {429, 500, 503}
 # Overload spikes are often momentary: retry the same model once after a short pause before falling back.
 # Matters more with parallel calls, where a request fails if any one of its calls fails.

@@ -17,7 +17,7 @@ Scanly reviews your resume the way a strict recruiter would. Upload a PDF, optio
 |---|---|
 | Frontend | React Router 7 (SPA mode), React 19, TypeScript, Tailwind CSS 4 |
 | Backend | FastAPI, Pydantic, Google Gen AI SDK |
-| AI | Gemini (`gemini-flash-latest`, falling back to `gemini-flash-lite-latest` when it's overloaded) |
+| AI | Gemini (`gemini-flash-lite-latest`, falling back to `gemini-flash-latest` when it's busy) |
 | Sign-in and storage | [Puter](https://puter.com) (puter.js): accounts, file storage, key-value store |
 | PDF rendering | pdf.js |
 
