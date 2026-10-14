@@ -27,6 +27,8 @@ api = TestClient(main.app)
 @pytest.fixture
 def fake_gemini(monkeypatch):
     """Replace the Gemini client. Call it with an async function that stands in for generate_content."""
+    monkeypatch.setattr(main, "RETRY_DELAY", 0)  # don't actually wait between retries in tests
+
     def install(generate_content):
         fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content)))
         monkeypatch.setattr(main, "client", fake)
@@ -65,23 +67,43 @@ def test_malformed_ai_output_is_502(fake_gemini):
     assert api.post("/api/analyze", files=PDF).status_code == 502
 
 
-def test_falls_back_when_primary_model_busy(fake_gemini):
+def test_falls_back_when_primary_model_stays_busy(fake_gemini):
     calls = []
 
-    async def flaky(model, **_):
+    async def primary_down(model, **_):
+        calls.append(model)
+        if model == main.MODELS[0]:
+            raise BUSY
+        return SimpleNamespace(text=json.dumps(GOOD))
+
+    fake_gemini(primary_down)
+    r = api.post("/api/analyze", files=PDF)
+    assert r.status_code == 200
+    # each group: primary tried, retried once, then the fallback model answered
+    n = len(main.GROUPS)
+    assert calls.count(main.MODELS[0]) == n * (1 + main.RETRIES)
+    assert calls.count(main.MODELS[1]) == n
+    timing = r.headers["server-timing"]
+    assert f'model;desc="{main.MODELS[1]}"' in timing
+    assert f"{main.MODELS[0]}:503" in timing.split('fallback;desc="')[1]
+
+
+def test_momentary_busy_is_retried_on_same_model(fake_gemini):
+    calls = []
+
+    async def busy_once(model, **_):
         calls.append(model)
         if len(calls) == 1:
             raise BUSY
         return SimpleNamespace(text=json.dumps(GOOD))
 
-    fake_gemini(flaky)
+    fake_gemini(busy_once)
     r = api.post("/api/analyze", files=PDF)
     assert r.status_code == 200
-    # one group hit the busy error and retried on the fallback model; the other answered first time
-    assert calls.count(main.MODELS[1]) == 1
+    assert main.MODELS[1] not in calls  # recovered on the primary model, no fallback needed
     timing = r.headers["server-timing"]
-    assert main.MODELS[1] in timing.split('model;desc="')[1].split('"')[0]
-    assert f'fallback;desc="{main.MODELS[0]}:503"' in timing
+    assert "fallback" not in timing
+    assert 'retries;desc="1"' in timing
 
 
 def test_no_fallback_entry_when_primary_answers(fake_gemini):
@@ -100,7 +122,8 @@ def test_pinned_single_model_busy_is_503_not_silent_fallback(fake_gemini, monkey
 
     fake_gemini(busy)
     assert api.post("/api/analyze", files=PDF).status_code == 503
-    assert calls == ["gemini-flash-latest"] * len(main.GROUPS)  # each group tried Flash once, none fell back
+    # each group tried Flash, retried once, and never fell back to another model
+    assert calls == ["gemini-flash-latest"] * (len(main.GROUPS) * (1 + main.RETRIES))
 
 
 def test_all_models_busy_is_friendly_503(fake_gemini):
@@ -285,3 +308,96 @@ def test_one_group_bad_json_is_502(fake_gemini):
 def test_overall_falls_back_to_average_when_missing(fake_gemini):
     no_overall = {k: v for k, v in GOOD.items() if k != "overallScore"}
     assert main.combine(no_overall).overallScore == 78  # (70 + 80 * 4) / 5
+
+
+def test_quota_429_falls_back_immediately_without_retry(fake_gemini):
+    quota = errors.ClientError(429, {"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+    calls = []
+
+    async def primary_out_of_quota(model, **_):
+        calls.append(model)
+        if model == main.MODELS[0]:
+            raise quota
+        return SimpleNamespace(text=json.dumps(GOOD))
+
+    fake_gemini(primary_out_of_quota)
+    r = api.post("/api/analyze", files=PDF)
+    assert r.status_code == 200
+    # one Flash attempt per group (no wasted retry), then straight to the fallback model
+    assert calls.count(main.MODELS[0]) == len(main.GROUPS)
+    assert "retries" not in r.headers["server-timing"]
+
+
+# --- Phase 5: Redis cache -----------------------------------------------------
+
+class FakeRedis:
+    """Just enough of redis.asyncio for the cache: get/set with a TTL, optionally broken."""
+    def __init__(self, broken=False):
+        self.data, self.ttls, self.broken = {}, {}, broken
+
+    async def get(self, key):
+        if self.broken:
+            raise ConnectionError("redis down")
+        return self.data.get(key)
+
+    async def set(self, key, value, ex=None):
+        if self.broken:
+            raise ConnectionError("redis down")
+        self.data[key], self.ttls[key] = value, ex
+
+
+def counting_gemini(fake_gemini):
+    calls = []
+
+    async def generate_content(**_):
+        calls.append(1)
+        return SimpleNamespace(text=json.dumps(GOOD))
+
+    fake_gemini(generate_content)
+    return calls
+
+
+def analyze(job="Software Engineer"):
+    return api.post("/api/analyze", files={"resume": ("r.pdf", make_pdf(RESUME), "application/pdf")},
+                    data={"jobTitle": job})
+
+
+def test_repeat_request_is_served_from_cache(fake_gemini, monkeypatch):
+    redis = FakeRedis()
+    monkeypatch.setattr(main, "cache", redis)
+    calls = counting_gemini(fake_gemini)
+
+    first = analyze()
+    assert first.status_code == 200 and 'cache;desc="miss"' in first.headers["server-timing"]
+    gemini_calls_after_first = len(calls)
+
+    second = analyze()
+    assert second.status_code == 200 and 'cache;desc="hit"' in second.headers["server-timing"]
+    assert len(calls) == gemini_calls_after_first  # no Gemini call on a hit
+    assert second.json() == first.json()  # same review, so the same resume always gets the same score
+    assert list(redis.ttls.values()) == [main.CACHE_TTL]
+
+
+def test_different_job_is_a_cache_miss(fake_gemini, monkeypatch):
+    monkeypatch.setattr(main, "cache", FakeRedis())
+    counting_gemini(fake_gemini)
+    analyze("Software Engineer")
+    assert 'cache;desc="miss"' in analyze("Data Analyst").headers["server-timing"]
+
+
+def test_redis_down_fails_open(fake_gemini, monkeypatch):
+    monkeypatch.setattr(main, "cache", FakeRedis(broken=True))
+    counting_gemini(fake_gemini)
+    r = analyze()
+    assert r.status_code == 200  # still analyzed, just uncached
+
+
+def test_no_redis_configured_reports_cache_off(fake_gemini):
+    counting_gemini(fake_gemini)
+    assert 'cache;desc="off"' in analyze().headers["server-timing"]
+
+
+def test_cache_key_changes_with_version(monkeypatch):
+    before = main.cache_key("resume text", "SWE", "")
+    monkeypatch.setattr(main, "CACHE_VERSION", "v2")
+    assert main.cache_key("resume text", "SWE", "") != before

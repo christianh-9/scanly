@@ -76,7 +76,8 @@ def main() -> None:
     if not pdfs:
         raise SystemExit(f"No PDFs in {SAMPLES}")
     targets = [args.url] + ([args.compare] if args.compare else [])
-    stats = {url: {"totals": [], "gemini": [], "out": [], "think": [], "fallbacks": 0, "failures": 0} for url in targets}
+    stats = {url: {"totals": [], "gemini": [], "out": [], "think": [], "hit": [], "miss": [],
+                   "fallbacks": 0, "failures": 0} for url in targets}
     if args.save:
         args.save.mkdir(parents=True, exist_ok=True)
 
@@ -113,14 +114,17 @@ def main() -> None:
                     if tok:
                         s["out"].append(int(tok["out"]))
                         s["think"].append(int(tok["think"]))
+                    if descs.get("cache") in ("hit", "miss"):
+                        s[descs["cache"]].append(elapsed)
                     fallback = descs.get("fallback", "")
                     if fallback:
                         s["fallbacks"] += 1
                     if args.save:
                         (args.save / f"{label}-pass{p + 1}-{pdf.stem}.json").write_text(r.text)
                     model = descs.get("model", "?") + (f"  (skipped {fallback})" if fallback else "")
-                    print(f"{run:>4}  {pdf.name[:28]:<28} {label:<6} {r.status_code:>6} {elapsed:>7.1f}s "
-                          f"{steps.get('gemini', 0):>7.1f}s  {descs.get('input', '-'):<5}  {descs.get('tokens', '-'):<28} {model}")
+                    print(f"{run:>4}  {pdf.name[:28]:<28} {label:<6} {r.status_code:>6} {elapsed:>7.2f}s "
+                          f"{steps.get('gemini', 0):>7.1f}s  {descs.get('input', '-'):<5}  {descs.get('tokens', '-'):<28} "
+                          f"{'[cache ' + descs['cache'] + '] ' if 'cache' in descs else ''}{model}")
 
     print()
     for t, url in enumerate(targets):
@@ -132,6 +136,12 @@ def main() -> None:
             print(f"    gemini  median {gem['median']:.1f}s   p90 {gem['p90']:.1f}s")
         if s["out"]:
             print(f"    tokens  median output {statistics.median(s['out']):.0f}   median thinking {statistics.median(s['think']):.0f}")
+        for kind in ("miss", "hit"):
+            if s[kind]:
+                c = summarize(s[kind])
+                print(f"    cache {kind:<4} median {c['median'] * 1000:.0f}ms   p90 {c['p90'] * 1000:.0f}ms   (n={len(s[kind])})")
+        if s["hit"] or s["miss"]:
+            print(f"    hit rate {len(s['hit']) / (len(s['hit']) + len(s['miss'])):.0%} (benchmark repeats resumes on purpose; not a real-world rate)")
         print(f"    fallback runs: {s['fallbacks']}   failed runs: {s['failures']}")
 
 
