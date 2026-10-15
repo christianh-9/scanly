@@ -72,7 +72,8 @@ app.add_middleware(
 
 
 # the upload page pings this on load so a sleeping free-tier server wakes before the user submits
-@app.get("/api/health")
+# HEAD too: uptime monitors (e.g. UptimeRobot) often check with HEAD, which would otherwise get a 405
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 def health() -> dict:
     return {"ok": True}
 

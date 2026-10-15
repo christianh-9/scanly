@@ -1,4 +1,5 @@
 """Run from server/: .venv/bin/pytest  (Gemini is faked, so no API quota is used)"""
+
 import json
 import os
 from types import SimpleNamespace
@@ -6,7 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 os.environ.setdefault("GEMINI_API_KEY", "test")
-os.environ.setdefault("ALLOWED_ORIGINS", "https://scanly.example/, https://other.example")
+os.environ.setdefault(
+    "ALLOWED_ORIGINS", "https://scanly.example/, https://other.example"
+)
 from fastapi.testclient import TestClient
 from google.genai import errors
 
@@ -16,10 +19,15 @@ SECTION = {"score": 80, "tips": [{"type": "good", "tip": "t", "explanation": "e"
 GOOD = {
     "overallScore": 75,
     "ATS": {"score": 70, "tips": [{"type": "improve", "tip": "t"}]},
-    "toneAndStyle": SECTION, "content": SECTION, "structure": SECTION, "skills": SECTION,
+    "toneAndStyle": SECTION,
+    "content": SECTION,
+    "structure": SECTION,
+    "skills": SECTION,
 }
 PDF = {"resume": ("r.pdf", b"%PDF-1.4", "application/pdf")}
-BUSY = errors.ServerError(503, {"error": {"code": 503, "message": "busy", "status": "UNAVAILABLE"}})
+BUSY = errors.ServerError(
+    503, {"error": {"code": 503, "message": "busy", "status": "UNAVAILABLE"}}
+)
 
 api = TestClient(main.app)
 
@@ -27,17 +35,25 @@ api = TestClient(main.app)
 @pytest.fixture
 def fake_gemini(monkeypatch):
     """Replace the Gemini client. Call it with an async function that stands in for generate_content."""
-    monkeypatch.setattr(main, "RETRY_DELAY", 0)  # don't actually wait between retries in tests
+    monkeypatch.setattr(
+        main, "RETRY_DELAY", 0
+    )  # don't actually wait between retries in tests
 
     def install(generate_content):
-        fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content)))
+        fake = SimpleNamespace(
+            aio=SimpleNamespace(
+                models=SimpleNamespace(generate_content=generate_content)
+            )
+        )
         monkeypatch.setattr(main, "client", fake)
+
     return install
 
 
 def replies(text):
     async def generate_content(**_):
         return SimpleNamespace(text=text)
+
     return generate_content
 
 
@@ -100,7 +116,9 @@ def test_momentary_busy_is_retried_on_same_model(fake_gemini):
     fake_gemini(busy_once)
     r = api.post("/api/analyze", files=PDF)
     assert r.status_code == 200
-    assert main.MODELS[1] not in calls  # recovered on the primary model, no fallback needed
+    assert (
+        main.MODELS[1] not in calls
+    )  # recovered on the primary model, no fallback needed
     timing = r.headers["server-timing"]
     assert "fallback" not in timing
     assert 'retries;desc="1"' in timing
@@ -108,7 +126,9 @@ def test_momentary_busy_is_retried_on_same_model(fake_gemini):
 
 def test_no_fallback_entry_when_primary_answers(fake_gemini):
     fake_gemini(replies(json.dumps(GOOD)))
-    assert "fallback" not in api.post("/api/analyze", files=PDF).headers["server-timing"]
+    assert (
+        "fallback" not in api.post("/api/analyze", files=PDF).headers["server-timing"]
+    )
 
 
 def test_pinned_single_model_busy_is_503_not_silent_fallback(fake_gemini, monkeypatch):
@@ -140,31 +160,48 @@ def test_health():
     assert api.get("/api/health").json() == {"ok": True}
 
 
-@pytest.mark.parametrize("origin, allowed", [
-    ("https://scanly.example", True),   # listed with a trailing slash in the env var
-    ("https://other.example", True),
-    ("https://evil.example", False),
-])
+def test_health_accepts_head_for_uptime_monitors():
+    assert api.head("/api/health").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "origin, allowed",
+    [
+        ("https://scanly.example", True),  # listed with a trailing slash in the env var
+        ("https://other.example", True),
+        ("https://evil.example", False),
+    ],
+)
 def test_cors(origin, allowed):
-    r = api.options("/api/analyze", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+    r = api.options(
+        "/api/analyze",
+        headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+    )
     assert (r.headers.get("access-control-allow-origin") == origin) is allowed
 
 
 # --- Phase 1: text extraction -------------------------------------------------
 
+
 def make_pdf(*pages: str) -> bytes:
     """Build a real PDF in memory; an empty string makes a page with no text (like a scanned image)."""
     import pymupdf
+
     doc = pymupdf.open()
     for text in pages:
         page = doc.new_page()
         if text:
-            page.insert_textbox(pymupdf.Rect(72, 72, 540, 720), text)  # wraps long text instead of clipping it
+            page.insert_textbox(
+                pymupdf.Rect(72, 72, 540, 720), text
+            )  # wraps long text instead of clipping it
     return doc.tobytes()
 
 
 def test_extract_text_single_page():
-    assert main.extract_text(make_pdf("Jane Doe, Software Engineer")) == "Jane Doe, Software Engineer"
+    assert (
+        main.extract_text(make_pdf("Jane Doe, Software Engineer"))
+        == "Jane Doe, Software Engineer"
+    )
 
 
 def test_extract_text_keeps_pages_apart():
@@ -194,12 +231,16 @@ def capture(monkeypatch_target):
     return sent
 
 
-RESUME = "Jane Doe. Software Engineer at Acme building React and Python services. " * 5  # > MIN_TEXT_CHARS
+RESUME = (
+    "Jane Doe. Software Engineer at Acme building React and Python services. " * 5
+)  # > MIN_TEXT_CHARS
 
 
 def test_text_resume_sends_text_not_pdf(fake_gemini):
     sent = capture(fake_gemini)
-    r = api.post("/api/analyze", files={"resume": ("r.pdf", make_pdf(RESUME), "application/pdf")})
+    r = api.post(
+        "/api/analyze", files={"resume": ("r.pdf", make_pdf(RESUME), "application/pdf")}
+    )
     assert r.status_code == 200
     first = sent["contents"][0]
     assert isinstance(first, str) and "Jane Doe" in first
@@ -209,7 +250,9 @@ def test_text_resume_sends_text_not_pdf(fake_gemini):
 
 def test_scanned_resume_falls_back_to_pdf(fake_gemini):
     sent = capture(fake_gemini)
-    r = api.post("/api/analyze", files={"resume": ("r.pdf", make_pdf(""), "application/pdf")})
+    r = api.post(
+        "/api/analyze", files={"resume": ("r.pdf", make_pdf(""), "application/pdf")}
+    )
     assert r.status_code == 200
     assert not isinstance(sent["contents"][0], str)  # a PDF Part, not text
     assert 'input;desc="pdf"' in r.headers["server-timing"]
@@ -225,28 +268,39 @@ def test_unreadable_pdf_falls_back_to_pdf(fake_gemini):
 def test_resume_input_pdf_forces_pdf(fake_gemini, monkeypatch):
     monkeypatch.setattr(main, "RESUME_INPUT", "pdf")
     sent = capture(fake_gemini)
-    r = api.post("/api/analyze", files={"resume": ("r.pdf", make_pdf(RESUME), "application/pdf")})
+    r = api.post(
+        "/api/analyze", files={"resume": ("r.pdf", make_pdf(RESUME), "application/pdf")}
+    )
     assert r.status_code == 200
     assert not isinstance(sent["contents"][0], str)
 
 
 def test_token_counts_in_header(fake_gemini):
     async def with_usage(**_):
-        usage = SimpleNamespace(prompt_token_count=900, candidates_token_count=700, thoughts_token_count=1200)
+        usage = SimpleNamespace(
+            prompt_token_count=900,
+            candidates_token_count=700,
+            thoughts_token_count=1200,
+        )
         return SimpleNamespace(text=json.dumps(GOOD), usage_metadata=usage)
 
     fake_gemini(with_usage)
     # summed across the parallel calls
     n = len(main.GROUPS)
-    assert (f'tokens;desc="in={900 * n} out={700 * n} think={1200 * n} calls={n}"'
-            in api.post("/api/analyze", files=PDF).headers["server-timing"])
+    assert (
+        f'tokens;desc="in={900 * n} out={700 * n} think={1200 * n} calls={n}"'
+        in api.post("/api/analyze", files=PDF).headers["server-timing"]
+    )
 
 
 # --- Phase 3: parallel calls --------------------------------------------------
 
+
 def test_groups_cover_every_section_exactly_once():
     flat = [k for g in main.GROUPS for k in g]
-    assert sorted(flat) == sorted(["ATS", "toneAndStyle", "content", "structure", "skills"])
+    assert sorted(flat) == sorted(
+        ["ATS", "toneAndStyle", "content", "structure", "skills"]
+    )
 
 
 def test_each_call_asks_only_for_its_group(fake_gemini):
@@ -258,7 +312,9 @@ def test_each_call_asks_only_for_its_group(fake_gemini):
 
     fake_gemini(record)
     assert api.post("/api/analyze", files=PDF).status_code == 200
-    expected = [sorted(["overallScore", *main.GROUPS[0]])] + [sorted(g) for g in main.GROUPS[1:]]
+    expected = [sorted(["overallScore", *main.GROUPS[0]])] + [
+        sorted(g) for g in main.GROUPS[1:]
+    ]
     assert sorted(asked) == sorted(expected)
 
 
@@ -266,6 +322,7 @@ def test_calls_run_in_parallel(fake_gemini):
     """Each fake call waits until every group's call has started. Run one after another, the first call
     would wait forever (the test times out instead); run in parallel, they all start and finish."""
     import asyncio
+
     started, everyone_started = 0, asyncio.Event()
 
     async def wait_for_others(**_):
@@ -311,7 +368,10 @@ def test_overall_falls_back_to_average_when_missing(fake_gemini):
 
 
 def test_quota_429_falls_back_immediately_without_retry(fake_gemini):
-    quota = errors.ClientError(429, {"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+    quota = errors.ClientError(
+        429,
+        {"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}},
+    )
     calls = []
 
     async def primary_out_of_quota(model, **_):
@@ -330,8 +390,10 @@ def test_quota_429_falls_back_immediately_without_retry(fake_gemini):
 
 # --- Phase 5: Redis cache -----------------------------------------------------
 
+
 class FakeRedis:
     """Just enough of redis.asyncio for the cache: get/set with a TTL, optionally broken."""
+
     def __init__(self, broken=False):
         self.data, self.ttls, self.broken = {}, {}, broken
 
@@ -358,8 +420,11 @@ def counting_gemini(fake_gemini):
 
 
 def analyze(job="Software Engineer"):
-    return api.post("/api/analyze", files={"resume": ("r.pdf", make_pdf(RESUME), "application/pdf")},
-                    data={"jobTitle": job})
+    return api.post(
+        "/api/analyze",
+        files={"resume": ("r.pdf", make_pdf(RESUME), "application/pdf")},
+        data={"jobTitle": job},
+    )
 
 
 def test_repeat_request_is_served_from_cache(fake_gemini, monkeypatch):
@@ -368,13 +433,21 @@ def test_repeat_request_is_served_from_cache(fake_gemini, monkeypatch):
     calls = counting_gemini(fake_gemini)
 
     first = analyze()
-    assert first.status_code == 200 and 'cache;desc="miss"' in first.headers["server-timing"]
+    assert (
+        first.status_code == 200
+        and 'cache;desc="miss"' in first.headers["server-timing"]
+    )
     gemini_calls_after_first = len(calls)
 
     second = analyze()
-    assert second.status_code == 200 and 'cache;desc="hit"' in second.headers["server-timing"]
+    assert (
+        second.status_code == 200
+        and 'cache;desc="hit"' in second.headers["server-timing"]
+    )
     assert len(calls) == gemini_calls_after_first  # no Gemini call on a hit
-    assert second.json() == first.json()  # same review, so the same resume always gets the same score
+    assert (
+        second.json() == first.json()
+    )  # same review, so the same resume always gets the same score
     assert list(redis.ttls.values()) == [main.CACHE_TTL]
 
 
@@ -405,15 +478,21 @@ def test_cache_key_changes_with_version(monkeypatch):
 
 # --- user-facing errors ---------------------------------------------------------
 
-@pytest.mark.parametrize("code, status, message", [
-    (402, 503, main.UNAVAILABLE),   # prepaid credits depleted
-    (401, 503, main.UNAVAILABLE),   # bad API key
-    (403, 503, main.UNAVAILABLE),   # permission / project problem
-    (400, 422, main.BAD_FILE),      # Gemini couldn't read the input
-])
+
+@pytest.mark.parametrize(
+    "code, status, message",
+    [
+        (402, 503, main.UNAVAILABLE),  # prepaid credits depleted
+        (401, 503, main.UNAVAILABLE),  # bad API key
+        (403, 503, main.UNAVAILABLE),  # permission / project problem
+        (400, 422, main.BAD_FILE),  # Gemini couldn't read the input
+    ],
+)
 def test_account_and_input_errors_are_friendly(fake_gemini, code, status, message):
     raw = "Your prepayment credits are depleted. Please go to AI Studio to manage billing."
-    err = errors.ClientError(code, {"error": {"code": code, "message": raw, "status": "X"}})
+    err = errors.ClientError(
+        code, {"error": {"code": code, "message": raw, "status": "X"}}
+    )
 
     async def fail(**_):
         raise err
@@ -422,7 +501,9 @@ def test_account_and_input_errors_are_friendly(fake_gemini, code, status, messag
     r = api.post("/api/analyze", files=PDF)
     assert r.status_code == status
     assert r.json()["detail"] == message
-    assert "billing" not in r.text and "credits" not in r.text  # Google's raw message never reaches users
+    assert (
+        "billing" not in r.text and "credits" not in r.text
+    )  # Google's raw message never reaches users
 
 
 def test_unexpected_exception_is_friendly(fake_gemini):
