@@ -401,3 +401,35 @@ def test_cache_key_changes_with_version(monkeypatch):
     before = main.cache_key("resume text", "SWE", "")
     monkeypatch.setattr(main, "CACHE_VERSION", "v2")
     assert main.cache_key("resume text", "SWE", "") != before
+
+
+# --- user-facing errors ---------------------------------------------------------
+
+@pytest.mark.parametrize("code, status, message", [
+    (402, 503, main.UNAVAILABLE),   # prepaid credits depleted
+    (401, 503, main.UNAVAILABLE),   # bad API key
+    (403, 503, main.UNAVAILABLE),   # permission / project problem
+    (400, 422, main.BAD_FILE),      # Gemini couldn't read the input
+])
+def test_account_and_input_errors_are_friendly(fake_gemini, code, status, message):
+    raw = "Your prepayment credits are depleted. Please go to AI Studio to manage billing."
+    err = errors.ClientError(code, {"error": {"code": code, "message": raw, "status": "X"}})
+
+    async def fail(**_):
+        raise err
+
+    fake_gemini(fail)
+    r = api.post("/api/analyze", files=PDF)
+    assert r.status_code == status
+    assert r.json()["detail"] == message
+    assert "billing" not in r.text and "credits" not in r.text  # Google's raw message never reaches users
+
+
+def test_unexpected_exception_is_friendly(fake_gemini):
+    async def boom(**_):
+        raise RuntimeError("socket exploded")
+
+    fake_gemini(boom)
+    r = api.post("/api/analyze", files=PDF)
+    assert r.status_code == 503
+    assert r.json()["detail"] == main.UNAVAILABLE

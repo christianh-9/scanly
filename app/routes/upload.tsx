@@ -6,6 +6,7 @@ import NavBar from '~/components/NavBar'
 import { convertPdfToImage } from '~/lib/pdf2img'
 import { usePuterStore } from '~/lib/puter'
 import { cn, generateUUID } from '~/lib/utils'
+import { API_URL, wakeBackend } from '~/lib/api'
 
 export const meta = () => ([
     { title: 'Scanly | New review' },
@@ -14,9 +15,6 @@ export const meta = () => ([
 
 type StepStatus = 'pending' | 'active' | 'done' | 'error'
 interface Step { label: string; status: StepStatus; ms?: number }
-
-// empty in local dev (Vite proxies /api); set to the backend's URL in production
-const API_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
 
 const STEPS = ['Rendering first page', 'Analyzing resume', 'Uploading PDF', 'Uploading preview', 'Saving review']
 
@@ -36,7 +34,7 @@ const Upload = () => {
     }, [isLoading, auth.isAuthenticated])
 
     // wake the backend while the form is being filled in
-    useEffect(() => { fetch(`${API_URL}/api/health`).catch(() => {}) }, [])
+    useEffect(wakeBackend, [])
 
     const isProcessing = steps !== null && !error
 

@@ -33,6 +33,20 @@ BUSY_CODES = {429, 500, 503}
 RETRIES = 1
 RETRY_CODES = {500, 503}
 RETRY_DELAY = 1.0  # seconds
+
+# Problems on our side (billing/credits, API key, permissions) are logged in full for us but shown to users plainly:
+# they can't fix them, and Google's raw messages mention our billing setup.
+UNAVAILABLE = "Analysis is temporarily unavailable. Please try again later."
+BAD_FILE = "Couldn't analyze this file. Export your resume as a PDF again and retry."
+
+
+def friendly_error(e: Exception) -> HTTPException:
+    """Turn a non-retryable Gemini error into a user-facing error, logging the real cause."""
+    code = getattr(e, "code", None)
+    log.error(f"gemini error code={code}: {getattr(e, 'message', None) or e}")
+    if code == 400:  # Gemini rejected the input itself, e.g. a PDF it can't read
+        return HTTPException(422, BAD_FILE)
+    return HTTPException(503, UNAVAILABLE)  # 401/402/403 (key, credits, permissions) and anything unexpected
 # "auto": send extracted text when the PDF has enough of it, else the PDF itself. "pdf": always send the PDF
 # (the pre-Phase-1 behaviour; used for side-by-side benchmarks and as an instant rollback).
 RESUME_INPUT = os.environ.get("RESUME_INPUT", "auto")
@@ -174,7 +188,7 @@ async def score_group(group: list[str], resume_part: Any, prompt: str, with_over
                 )
             except errors.APIError as e:
                 if e.code not in BUSY_CODES:
-                    raise HTTPException(502, f"AI request failed: {e.message or e}")
+                    raise friendly_error(e)
                 if attempt < RETRIES and e.code in RETRY_CODES:  # overloaded: pause, then try the same model again
                     retries += 1
                     await asyncio.sleep(RETRY_DELAY)
@@ -182,7 +196,7 @@ async def score_group(group: list[str], resume_part: Any, prompt: str, with_over
                 skipped.append(f"{model}:{e.code}")  # still busy: move on to the next model
                 break
             except Exception as e:
-                raise HTTPException(502, f"AI request failed: {e}")
+                raise friendly_error(e)
             try:
                 data = json.loads(result.text or "")
             except json.JSONDecodeError:
@@ -301,7 +315,7 @@ async def analyze(
     if failed:
         log.info(f"analyze failed: {len(failed)}/{len(GROUPS)} parallel calls failed: {failed[0]}")
         first = failed[0]
-        raise first if isinstance(first, HTTPException) else HTTPException(502, f"AI request failed: {first}")
+        raise first if isinstance(first, HTTPException) else friendly_error(first)
     lap("gemini")
 
     try:

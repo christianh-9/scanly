@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { Link } from 'react-router'
+import { wakeBackend } from '~/lib/api'
 import Summary from '~/components/Summary'
 import { DEMO_RESUME } from '~/lib/demo'
 
@@ -9,7 +11,10 @@ const STEPS = [
 ]
 
 // Front page for signed-out visitors. The preview on the right is the real sample review, not a mockup.
-const Landing = () => (
+const Landing = () => {
+    useEffect(wakeBackend, [])  // most visitors land here first
+
+    return (
     <>
         <section className="container-page grid items-center gap-12 py-14 sm:py-20 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <div className="flex flex-col items-start gap-6">
@@ -65,6 +70,7 @@ const Landing = () => (
             </div>
         </footer>
     </>
-)
+    )
+}
 
 export default Landing

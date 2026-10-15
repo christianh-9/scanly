@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { Link } from 'react-router'
+import { wakeBackend } from '~/lib/api'
 import NavBar from '~/components/NavBar'
 import ReviewView from '~/components/ReviewView'
 import { DEMO_RESUME } from '~/lib/demo'
@@ -9,7 +11,10 @@ export const meta = () => ([
 ])
 
 // Public sample review: static data, no sign-in, no API calls.
-const Demo = () => (
+const Demo = () => {
+    useEffect(wakeBackend, [])  // visitors often try their own resume next
+
+    return (
     <main className="min-h-screen">
         <NavBar/>
         <div className="border-b border-line bg-raised">
@@ -30,6 +35,7 @@ const Demo = () => (
             feedback={DEMO_RESUME.feedback}
         />
     </main>
-)
+    )
+}
 
 export default Demo
