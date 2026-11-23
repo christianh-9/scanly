@@ -519,3 +519,25 @@ def test_missing_model_404_falls_back_to_next_model(fake_gemini):
     assert r.status_code == 200
     assert calls.count(main.MODELS[0]) == len(main.GROUPS)  # no retry on 404
     assert f"{main.MODELS[0]}:404" in r.headers["server-timing"]
+
+
+
+def test_health_pings_redis(monkeypatch):
+    pings = []
+
+    class Pingable(FakeRedis):
+        async def ping(self):
+            pings.append(1)
+
+    monkeypatch.setattr(main, "cache", Pingable())
+    assert api.get("/api/health").json() == {"ok": True}
+    assert pings == [1]
+
+
+def test_health_ok_when_redis_down(monkeypatch):
+    class Down(FakeRedis):
+        async def ping(self):
+            raise ConnectionError("redis down")
+
+    monkeypatch.setattr(main, "cache", Down())
+    assert api.get("/api/health").status_code == 200

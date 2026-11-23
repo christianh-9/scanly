@@ -68,8 +68,14 @@ app.add_middleware(
 
 
 # Pinged to wake the server. HEAD is for uptime monitors.
+# Also pings Redis so Upstash doesn't archive it for inactivity (free DBs go after 14 idle days).
 @app.api_route("/api/health", methods=["GET", "HEAD"])
-def health() -> dict:
+async def health() -> dict:
+    if cache is not None:
+        try:
+            await cache.ping()
+        except Exception as e:
+            log.info(f"redis ping failed: {e}")
     return {"ok": True}
 
 
