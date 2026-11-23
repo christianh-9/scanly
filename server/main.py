@@ -21,48 +21,44 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("scanly")
 
-MAX_PDF_BYTES = 20 * 1024 * 1024  # matches the limit in FileUploader.tsx
-# Aliases track the current models, so they won't get retired under us. Flash-Lite is primary: faster (~2 s median in
-# benchmarks) and a much larger free-tier quota (500/day vs Flash's 20/day); Flash is the fallback when it's busy.
-# GEMINI_MODELS overrides the order (comma-separated), e.g. "gemini-flash-latest" alone to benchmark Flash without fallback.
+MAX_PDF_BYTES = 20 * 1024 * 1024  # same limit as the uploader
+
+# Lite first: faster and a much bigger free quota. Override with GEMINI_MODELS.
 MODELS = [m.strip() for m in os.environ.get("GEMINI_MODELS", "gemini-flash-lite-latest,gemini-flash-latest").split(",") if m.strip()]
 BUSY_CODES = {429, 500, 503}
-# Overload spikes are often momentary: retry the same model once after a short pause before falling back.
-# Matters more with parallel calls, where a request fails if any one of its calls fails.
-# Only overload errors are retried: a 429 means our rate/daily quota is used up, which won't clear in a second.
+FALLBACK_CODES = BUSY_CODES | {404}  # 404 = model name gone, try the next one
+
+# Overloads usually pass quickly, so retry once. Don't retry 429s, the quota won't come back in a second.
 RETRIES = 1
 RETRY_CODES = {500, 503}
-RETRY_DELAY = 1.0  # seconds
+RETRY_DELAY = 1.0
 
-# Problems on our side (billing/credits, API key, permissions) are logged in full for us but shown to users plainly:
-# they can't fix them, and Google's raw messages mention our billing setup.
+# Users can't fix key/billing problems, so keep the message vague and log the real error.
 UNAVAILABLE = "Analysis is temporarily unavailable. Please try again later."
 BAD_FILE = "Couldn't analyze this file. Export your resume as a PDF again and retry."
 
 
 def friendly_error(e: Exception) -> HTTPException:
-    """Turn a non-retryable Gemini error into a user-facing error, logging the real cause."""
     code = getattr(e, "code", None)
     log.error(f"gemini error code={code}: {getattr(e, 'message', None) or e}")
-    if code == 400:  # Gemini rejected the input itself, e.g. a PDF it can't read
+    if code == 400:
         return HTTPException(422, BAD_FILE)
-    return HTTPException(503, UNAVAILABLE)  # 401/402/403 (key, credits, permissions) and anything unexpected
-# "auto": send extracted text when the PDF has enough of it, else the PDF itself. "pdf": always send the PDF
-# (the pre-Phase-1 behaviour; used for side-by-side benchmarks and as an instant rollback).
-RESUME_INPUT = os.environ.get("RESUME_INPUT", "auto")
-MIN_TEXT_CHARS = 200  # less than this means a scanned/image-only PDF, so Gemini needs to see the page itself
+    return HTTPException(503, UNAVAILABLE)
 
-client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-# Optional Redis cache for repeat analyses (same resume text + same job). Without REDIS_URL the app runs uncached.
-# Short socket timeouts so a slow or unreachable Redis costs at most ~0.5 s before we skip it (fail open).
+RESUME_INPUT = os.environ.get("RESUME_INPUT", "auto")  # "pdf" skips text extraction
+MIN_TEXT_CHARS = 200  # below this it's probably a scanned PDF
+
+# -latest aliases only exist on v1beta
+client = genai.Client(api_key=os.environ["GEMINI_API_KEY"], http_options=types.HttpOptions(api_version="v1beta"))
+
+# Optional. Short timeouts so a dead Redis doesn't hold up requests.
 REDIS_URL = os.environ.get("REDIS_URL", "")
-CACHE_TTL = 7 * 24 * 3600  # seconds
-CACHE_VERSION = "v1"  # bump when the prompt, models or output change, so stale reviews are never served
+CACHE_TTL = 7 * 24 * 3600
+CACHE_VERSION = "v1"  # bump when the prompt or models change
 cache = aioredis.from_url(REDIS_URL, socket_timeout=0.5, socket_connect_timeout=0.5) if REDIS_URL else None
 app = FastAPI(title="Scanly API")
 
-# the deployed frontend lives on another domain; list it in ALLOWED_ORIGINS (comma-separated)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()],
@@ -71,8 +67,7 @@ app.add_middleware(
 )
 
 
-# the upload page pings this on load so a sleeping free-tier server wakes before the user submits
-# HEAD too: uptime monitors (e.g. UptimeRobot) often check with HEAD, which would otherwise get a 405
+# Pinged to wake the server. HEAD is for uptime monitors.
 @app.api_route("/api/health", methods=["GET", "HEAD"])
 def health() -> dict:
     return {"ok": True}
@@ -98,7 +93,7 @@ class Section(BaseModel):
 
 
 class Feedback(BaseModel):
-    """Mirrors the Feedback interface in types/index.d.ts."""
+    """Same shape as Feedback in types/index.d.ts."""
 
     overallScore: int = Field(ge=0, le=100)
     ATS: AtsSection
@@ -109,7 +104,7 @@ class Feedback(BaseModel):
 
 
 def build_prompt(job_title: str, job_description: str) -> str:
-    # Output is generated token by token, so its length drives response time: keep tips short and the JSON compact.
+    # Short output = faster response
     return f"""You are an expert in ATS (Applicant Tracking System) and resume analysis.
 Analyze and rate this resume and suggest how to improve it.
 The rating can be low if the resume is bad. Point out the most important mistakes.
@@ -122,29 +117,14 @@ Job description: {job_description or "(not provided)"}"""
 
 
 def extract_text(pdf: bytes) -> str:
-    """Return all the text in a PDF, page by page, as one string ("" if there is none).
-
-    Used to send Gemini plain text instead of the whole PDF. A scanned resume (just an image of the page)
-    has no text layer, so this returns "" or almost nothing, and the caller falls back to sending the PDF.
-
-    TODO:
-    - open the PDF from bytes, not from a file path: pymupdf.open(stream=pdf, filetype="pdf")
-    - loop over the pages; page.get_text() returns that page's text
-    - join the pages with a newline so words from different pages don't run together
-    - strip leading/trailing whitespace from the result
-    - close the document when done (a `with` block does this for you)
-    - a corrupt or non-PDF file makes pymupdf.open raise; let that propagate, the caller handles it
-    """
+    """All the text in the PDF, or "" for a scanned one."""
     with pymupdf.open(stream=pdf, filetype="pdf") as doc:
         return "\n".join(page.get_text() for page in doc).strip()
 
 
-# Sections scored together in one Gemini call; the groups run in parallel. Fewer groups = fewer API calls,
-# more groups = less output per call (faster) but more calls per analysis against the per-minute rate limit.
-# [[all five]] is one call; [["ATS"], ["toneAndStyle"], ...] is one call per section.
+# One Gemini call per group, run in parallel. More groups = faster but more API calls.
+# The first group also returns overallScore (an average was too generous on weak resumes).
 GROUPS = [["ATS", "toneAndStyle", "content"], ["structure", "skills"]]
-# The first group also returns overallScore: the model's judgement of the whole resume, which is harsher on weak or
-# mismatched resumes than an average of section scores (measured: a mismatched resume averaged ~50 vs ~37 holistic).
 
 
 @dataclass
@@ -158,17 +138,12 @@ class GroupResult:
 
 
 def group_schema(fields: list[str]) -> dict:
-    """The Feedback JSON schema cut down to just these fields."""
     full = Feedback.model_json_schema()
     return {**full, "properties": {k: full["properties"][k] for k in fields}, "required": list(fields)}
 
 
 async def score_group(group: list[str], resume_part: Any, prompt: str, with_overall: bool = False) -> GroupResult:
-    """Score one group of sections, trying each model in MODELS until one isn't busy.
-
-    Raises HTTPException (503 if every model was busy, 502 for any other failure) so the caller can fail the
-    whole request clearly instead of returning a review with sections missing.
-    """
+    """Try each model until one answers. Raises HTTPException if none do."""
     start = time.perf_counter()
     skipped: list[str] = []
     fields = ["overallScore", *group] if with_overall else group
@@ -188,13 +163,13 @@ async def score_group(group: list[str], resume_part: Any, prompt: str, with_over
                     ),
                 )
             except errors.APIError as e:
-                if e.code not in BUSY_CODES:
+                if e.code not in FALLBACK_CODES:
                     raise friendly_error(e)
-                if attempt < RETRIES and e.code in RETRY_CODES:  # overloaded: pause, then try the same model again
+                if attempt < RETRIES and e.code in RETRY_CODES:
                     retries += 1
                     await asyncio.sleep(RETRY_DELAY)
                     continue
-                skipped.append(f"{model}:{e.code}")  # still busy: move on to the next model
+                skipped.append(f"{model}:{e.code}")
                 break
             except Exception as e:
                 raise friendly_error(e)
@@ -204,7 +179,7 @@ async def score_group(group: list[str], resume_part: Any, prompt: str, with_over
                 raise HTTPException(502, "AI returned feedback in an unexpected format, please try again")
             if not isinstance(data, dict):
                 raise HTTPException(502, "AI returned feedback in an unexpected format, please try again")
-            sections = {k: data.get(k) for k in fields}  # ignore anything outside this group
+            sections = {k: data.get(k) for k in fields}
             return GroupResult(sections, model, skipped, getattr(result, "usage_metadata", None),
                                time.perf_counter() - start, retries)
     log.info(f"group {'+'.join(group)} failed: all models busy ({', '.join(skipped)})")
@@ -212,10 +187,7 @@ async def score_group(group: list[str], resume_part: Any, prompt: str, with_over
 
 
 def combine(sections: dict[str, Any]) -> Feedback:
-    """Validate each section and build the Feedback the frontend expects.
-
-    overallScore comes from the first group's call; if it's missing, fall back to the average of the sections.
-    """
+    """Merge the groups into one Feedback. Falls back to the average if overallScore is missing."""
     sections = dict(sections)
     overall = sections.pop("overallScore", None)
     parsed = {k: Feedback.model_fields[k].annotation.model_validate(v) for k, v in sections.items()}
@@ -225,19 +197,18 @@ def combine(sections: dict[str, Any]) -> Feedback:
 
 
 def cache_key(resume: str | bytes, job_title: str, job_description: str) -> str:
-    """Fingerprint of everything that affects the review. Keyed on extracted text (not PDF bytes) when we have it,
-    so the same resume re-exported from Word or Google Docs still hits."""
+    # Uses the text when we have it, so a re-exported copy of the same resume still hits
     h = hashlib.sha256()
     for part in (CACHE_VERSION, ",".join(MODELS), ",".join("+".join(g) for g in GROUPS),
                  job_title.strip(), job_description.strip()):
         h.update(part.encode())
-        h.update(b"\0")  # separator, so ("ab", "c") and ("a", "bc") can't collide
+        h.update(b"\0")
     h.update(resume.encode() if isinstance(resume, str) else resume)
     return f"scanly:review:{h.hexdigest()}"
 
 
 async def cache_get(key: str) -> Feedback | None:
-    """Cached review, or None on a miss, when caching is off, or if Redis fails (fail open)."""
+    # Any Redis problem counts as a miss
     if cache is None:
         return None
     try:
@@ -250,7 +221,7 @@ async def cache_get(key: str) -> Feedback | None:
     try:
         return Feedback.model_validate_json(raw)
     except ValidationError:
-        return None  # an entry that no longer fits the schema is treated as a miss
+        return None
 
 
 async def cache_set(key: str, feedback: Feedback) -> None:
@@ -269,7 +240,7 @@ async def analyze(
     jobTitle: str = Form(""),
     jobDescription: str = Form(""),
 ) -> Feedback:
-    # seconds spent in each step, filled in by lap(); logged and sent back in a Server-Timing header
+    # time per step, for the log and the Server-Timing header
     timings: dict[str, float] = {}
     last = time.perf_counter()
 
@@ -290,7 +261,7 @@ async def analyze(
     if RESUME_INPUT != "pdf":
         try:
             text = extract_text(pdf)
-        except Exception as e:  # unreadable PDF: let Gemini try the file itself
+        except Exception as e:  # let Gemini try the PDF instead
             log.info(f"text extraction failed, sending PDF: {e}")
     send_text = len(text) >= MIN_TEXT_CHARS
     resume_part = f"Resume text:\n{text}" if send_text else types.Part.from_bytes(data=pdf, mime_type="application/pdf")
@@ -306,7 +277,6 @@ async def analyze(
             [f"{k};dur={v * 1000:.1f}" for k, v in timings.items()] + ['cache;desc="hit"'])
         return cached
 
-    # all groups at once: the wait is roughly the slowest group, not the sum of them
     outcomes = await asyncio.gather(
         *(score_group(group, resume_part, build_prompt(jobTitle, jobDescription), with_overall=(i == 0))
           for i, group in enumerate(GROUPS)),
@@ -328,9 +298,8 @@ async def analyze(
     cache_status = "off" if cache is None else "miss"
 
     total = sum(timings.values())
-    models = "|".join(dict.fromkeys(o.model for o in outcomes))  # unique, in order
-    fallback = "|".join(x for o in outcomes for x in o.skipped)  # "|" not ",": commas separate Server-Timing entries
-    # output (and hidden "thinking") tokens are generated one by one, so they drive most of the Gemini time
+    models = "|".join(dict.fromkeys(o.model for o in outcomes))
+    fallback = "|".join(x for o in outcomes for x in o.skipped)  # not "," since that splits the header
     retries = sum(o.retries for o in outcomes)
     usages = [o.usage for o in outcomes if o.usage]
     tokens = (f"in={sum(u.prompt_token_count or 0 for u in usages)} out={sum(u.candidates_token_count or 0 for u in usages)} "
@@ -343,7 +312,7 @@ async def analyze(
         + (f" fallback={fallback}" if fallback else "")
         + (f" retries={retries}" if retries else "")
     )
-    # standard header (shows in browser DevTools); durations in milliseconds; desc carries labels
+    # shows up in DevTools > Network > Timing
     entries = [f"{k};dur={v * 1000:.1f}" for k, v in timings.items()]
     entries += [f"call{i + 1};dur={o.seconds * 1000:.1f};desc=\"{'+'.join(o.sections)}\"" for i, o in enumerate(outcomes)]
     entries += [f'model;desc="{models}"', f'input;desc="{"text" if send_text else "pdf"}"', f'cache;desc="{cache_status}"']

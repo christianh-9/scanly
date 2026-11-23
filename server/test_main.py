@@ -1,4 +1,4 @@
-"""Run from server/: .venv/bin/pytest  (Gemini is faked, so no API quota is used)"""
+"""Run from server/ with .venv/bin/pytest. Gemini is mocked."""
 
 import json
 import os
@@ -34,10 +34,8 @@ api = TestClient(main.app)
 
 @pytest.fixture
 def fake_gemini(monkeypatch):
-    """Replace the Gemini client. Call it with an async function that stands in for generate_content."""
-    monkeypatch.setattr(
-        main, "RETRY_DELAY", 0
-    )  # don't actually wait between retries in tests
+    """Swap in a fake generate_content."""
+    monkeypatch.setattr(main, "RETRY_DELAY", 0)
 
     def install(generate_content):
         fake = SimpleNamespace(
@@ -61,7 +59,7 @@ def test_valid_analysis(fake_gemini):
     fake_gemini(replies(json.dumps(GOOD)))
     r = api.post("/api/analyze", files=PDF, data={"jobTitle": "Dev"})
     assert r.status_code == 200, r.text
-    # overall comes from the first call's holistic judgement (GOOD says 75), not the section average (78)
+    # from the model (75), not the section average (78)
     assert r.json()["overallScore"] == 75
 
 
@@ -95,7 +93,6 @@ def test_falls_back_when_primary_model_stays_busy(fake_gemini):
     fake_gemini(primary_down)
     r = api.post("/api/analyze", files=PDF)
     assert r.status_code == 200
-    # each group: primary tried, retried once, then the fallback model answered
     n = len(main.GROUPS)
     assert calls.count(main.MODELS[0]) == n * (1 + main.RETRIES)
     assert calls.count(main.MODELS[1]) == n
@@ -116,9 +113,7 @@ def test_momentary_busy_is_retried_on_same_model(fake_gemini):
     fake_gemini(busy_once)
     r = api.post("/api/analyze", files=PDF)
     assert r.status_code == 200
-    assert (
-        main.MODELS[1] not in calls
-    )  # recovered on the primary model, no fallback needed
+    assert main.MODELS[1] not in calls
     timing = r.headers["server-timing"]
     assert "fallback" not in timing
     assert 'retries;desc="1"' in timing
@@ -132,7 +127,7 @@ def test_no_fallback_entry_when_primary_answers(fake_gemini):
 
 
 def test_pinned_single_model_busy_is_503_not_silent_fallback(fake_gemini, monkeypatch):
-    # GEMINI_MODELS="gemini-flash-latest" for benchmarking: a busy Flash must fail, not quietly switch to Lite
+    # pinned for benchmarks: should fail, not switch models
     monkeypatch.setattr(main, "MODELS", ["gemini-flash-latest"])
     calls = []
 
@@ -142,7 +137,6 @@ def test_pinned_single_model_busy_is_503_not_silent_fallback(fake_gemini, monkey
 
     fake_gemini(busy)
     assert api.post("/api/analyze", files=PDF).status_code == 503
-    # each group tried Flash, retried once, and never fell back to another model
     assert calls == ["gemini-flash-latest"] * (len(main.GROUPS) * (1 + main.RETRIES))
 
 
@@ -167,7 +161,7 @@ def test_health_accepts_head_for_uptime_monitors():
 @pytest.mark.parametrize(
     "origin, allowed",
     [
-        ("https://scanly.example", True),  # listed with a trailing slash in the env var
+        ("https://scanly.example", True),  # env var has a trailing slash
         ("https://other.example", True),
         ("https://evil.example", False),
     ],
@@ -180,20 +174,18 @@ def test_cors(origin, allowed):
     assert (r.headers.get("access-control-allow-origin") == origin) is allowed
 
 
-# --- Phase 1: text extraction -------------------------------------------------
+# text extraction
 
 
 def make_pdf(*pages: str) -> bytes:
-    """Build a real PDF in memory; an empty string makes a page with no text (like a scanned image)."""
+    """Real PDF in memory. An empty string gives a page with no text."""
     import pymupdf
 
     doc = pymupdf.open()
     for text in pages:
         page = doc.new_page()
         if text:
-            page.insert_textbox(
-                pymupdf.Rect(72, 72, 540, 720), text
-            )  # wraps long text instead of clipping it
+            page.insert_textbox(pymupdf.Rect(72, 72, 540, 720), text)
     return doc.tobytes()
 
 
@@ -207,7 +199,7 @@ def test_extract_text_single_page():
 def test_extract_text_keeps_pages_apart():
     text = main.extract_text(make_pdf("Page one ends here", "Page two starts here"))
     assert "Page one ends here" in text and "Page two starts here" in text
-    assert "herePage" not in text  # pages must not run together
+    assert "herePage" not in text
 
 
 def test_extract_text_no_text_layer_returns_empty():
@@ -220,7 +212,7 @@ def test_extract_text_corrupt_pdf_raises():
 
 
 def capture(monkeypatch_target):
-    """Fake Gemini that records what it was sent and replies with valid feedback."""
+    """Fake Gemini that remembers what it was sent."""
     sent = {}
 
     async def generate_content(contents, **_):
@@ -233,7 +225,7 @@ def capture(monkeypatch_target):
 
 RESUME = (
     "Jane Doe. Software Engineer at Acme building React and Python services. " * 5
-)  # > MIN_TEXT_CHARS
+)  # longer than MIN_TEXT_CHARS
 
 
 def test_text_resume_sends_text_not_pdf(fake_gemini):
@@ -254,13 +246,13 @@ def test_scanned_resume_falls_back_to_pdf(fake_gemini):
         "/api/analyze", files={"resume": ("r.pdf", make_pdf(""), "application/pdf")}
     )
     assert r.status_code == 200
-    assert not isinstance(sent["contents"][0], str)  # a PDF Part, not text
+    assert not isinstance(sent["contents"][0], str)
     assert 'input;desc="pdf"' in r.headers["server-timing"]
 
 
 def test_unreadable_pdf_falls_back_to_pdf(fake_gemini):
     sent = capture(fake_gemini)
-    r = api.post("/api/analyze", files=PDF)  # b"%PDF-1.4": not a real PDF
+    r = api.post("/api/analyze", files=PDF)  # not a real PDF
     assert r.status_code == 200
     assert not isinstance(sent["contents"][0], str)
 
@@ -285,7 +277,6 @@ def test_token_counts_in_header(fake_gemini):
         return SimpleNamespace(text=json.dumps(GOOD), usage_metadata=usage)
 
     fake_gemini(with_usage)
-    # summed across the parallel calls
     n = len(main.GROUPS)
     assert (
         f'tokens;desc="in={900 * n} out={700 * n} think={1200 * n} calls={n}"'
@@ -293,7 +284,7 @@ def test_token_counts_in_header(fake_gemini):
     )
 
 
-# --- Phase 3: parallel calls --------------------------------------------------
+# parallel calls
 
 
 def test_groups_cover_every_section_exactly_once():
@@ -319,8 +310,7 @@ def test_each_call_asks_only_for_its_group(fake_gemini):
 
 
 def test_calls_run_in_parallel(fake_gemini):
-    """Each fake call waits until every group's call has started. Run one after another, the first call
-    would wait forever (the test times out instead); run in parallel, they all start and finish."""
+    """Each call waits for the others to start, so this only passes if they run at the same time."""
     import asyncio
 
     started, everyone_started = 0, asyncio.Event()
@@ -339,8 +329,7 @@ def test_calls_run_in_parallel(fake_gemini):
 
 
 def test_one_group_failing_fails_the_whole_request_clearly(fake_gemini):
-    # the group that includes "structure" is always busy; the other succeeds. The response must be a clear
-    # 503, never a 200 with sections missing.
+    # one group fails: expect a 503, not a half-filled review
     async def structure_busy(config, **_):
         if "structure" in config.response_json_schema["properties"]:
             raise BUSY
@@ -383,16 +372,15 @@ def test_quota_429_falls_back_immediately_without_retry(fake_gemini):
     fake_gemini(primary_out_of_quota)
     r = api.post("/api/analyze", files=PDF)
     assert r.status_code == 200
-    # one Flash attempt per group (no wasted retry), then straight to the fallback model
     assert calls.count(main.MODELS[0]) == len(main.GROUPS)
     assert "retries" not in r.headers["server-timing"]
 
 
-# --- Phase 5: Redis cache -----------------------------------------------------
+# cache
 
 
 class FakeRedis:
-    """Just enough of redis.asyncio for the cache: get/set with a TTL, optionally broken."""
+    """Minimal stand-in for redis.asyncio."""
 
     def __init__(self, broken=False):
         self.data, self.ttls, self.broken = {}, {}, broken
@@ -444,10 +432,10 @@ def test_repeat_request_is_served_from_cache(fake_gemini, monkeypatch):
         second.status_code == 200
         and 'cache;desc="hit"' in second.headers["server-timing"]
     )
-    assert len(calls) == gemini_calls_after_first  # no Gemini call on a hit
+    assert len(calls) == gemini_calls_after_first
     assert (
         second.json() == first.json()
-    )  # same review, so the same resume always gets the same score
+    )
     assert list(redis.ttls.values()) == [main.CACHE_TTL]
 
 
@@ -462,7 +450,7 @@ def test_redis_down_fails_open(fake_gemini, monkeypatch):
     monkeypatch.setattr(main, "cache", FakeRedis(broken=True))
     counting_gemini(fake_gemini)
     r = analyze()
-    assert r.status_code == 200  # still analyzed, just uncached
+    assert r.status_code == 200
 
 
 def test_no_redis_configured_reports_cache_off(fake_gemini):
@@ -476,7 +464,7 @@ def test_cache_key_changes_with_version(monkeypatch):
     assert main.cache_key("resume text", "SWE", "") != before
 
 
-# --- user-facing errors ---------------------------------------------------------
+# error messages
 
 
 @pytest.mark.parametrize(
@@ -503,7 +491,7 @@ def test_account_and_input_errors_are_friendly(fake_gemini, code, status, messag
     assert r.json()["detail"] == message
     assert (
         "billing" not in r.text and "credits" not in r.text
-    )  # Google's raw message never reaches users
+    )
 
 
 def test_unexpected_exception_is_friendly(fake_gemini):
@@ -514,3 +502,20 @@ def test_unexpected_exception_is_friendly(fake_gemini):
     r = api.post("/api/analyze", files=PDF)
     assert r.status_code == 503
     assert r.json()["detail"] == main.UNAVAILABLE
+
+
+def test_missing_model_404_falls_back_to_next_model(fake_gemini):
+    missing = errors.ClientError(404, {"error": {"code": 404, "message": "model not found", "status": "NOT_FOUND"}})
+    calls = []
+
+    async def primary_missing(model, **_):
+        calls.append(model)
+        if model == main.MODELS[0]:
+            raise missing
+        return SimpleNamespace(text=json.dumps(GOOD))
+
+    fake_gemini(primary_missing)
+    r = api.post("/api/analyze", files=PDF)
+    assert r.status_code == 200
+    assert calls.count(main.MODELS[0]) == len(main.GROUPS)  # no retry on 404
+    assert f"{main.MODELS[0]}:404" in r.headers["server-timing"]
