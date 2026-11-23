@@ -13,10 +13,10 @@ interface Props {
     imageUrl: string
     pdfUrl: string
     feedback: Feedback | null
-    actions?: ReactNode  // right side of the header strip, e.g. the delete button
+    actions?: ReactNode
 }
 
-// The review layout shared by real reviews (/resume/:id) and the public sample (/demo).
+// Used by /resume/:id and /demo
 const ReviewView = ({ title, subtitle, backTo, backLabel, imageUrl, pdfUrl, feedback, actions }: Props) => (
     <>
         <div className="border-b border-line">
@@ -51,7 +51,7 @@ const ReviewView = ({ title, subtitle, backTo, backLabel, imageUrl, pdfUrl, feed
                 </div>
             </aside>
 
-            {/* below lg this column dissolves so the resume can sit between the verdict and the details */}
+            {/* on mobile, lets the resume sit between the score and the details */}
             <div className="contents lg:flex lg:flex-col lg:gap-8">
                 {feedback ? (
                     <>

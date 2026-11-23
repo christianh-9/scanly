@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 
-// Paths from Lucide (ISC). One stroke weight for the whole app.
+// Paths from Lucide (ISC)
 const Icon = ({ children, ...props }: SVGProps<SVGSVGElement>) => (
   <svg
     width="16"
@@ -78,7 +78,6 @@ export const ExternalIcon = (p: P) => (
   </Icon>
 );
 
-// Scanly mark: a page with a scan line through it.
 export const LogoMark = (p: P) => (
   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" {...p}>
     <rect x="3.5" y="1.5" width="13" height="17" rx="2" stroke="currentColor" strokeWidth="1.5" />

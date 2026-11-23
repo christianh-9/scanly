@@ -6,7 +6,6 @@ import { cn, scoreTone, toneText, verdict } from "~/lib/utils";
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
 
-// One row in the review history.
 const ResumeCard = ({ resume, onDeleted }: { resume: Resume; onDeleted: () => void }) => {
     const { fs } = usePuterStore();
     const [imageUrl, setImageUrl] = useState("");
@@ -44,7 +43,7 @@ const ResumeCard = ({ resume, onDeleted }: { resume: Resume; onDeleted: () => vo
                 {score}
             </div>
 
-            {/* sits above the row link's overlay */}
+            {/* above the row link so it stays clickable */}
             <div className="relative z-[1]">
                 <DeleteResumeButton resume={resume} onDeleted={onDeleted} />
             </div>

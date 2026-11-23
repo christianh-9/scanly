@@ -8,7 +8,7 @@ const ATS = ({
   score: number;
   suggestions: { type: "good" | "improve"; tip: string }[];
 }) => {
-  // problems first; that's what the visitor came for
+  // problems first
   const sorted = [...suggestions].sort((a, b) => (a.type === b.type ? 0 : a.type === "improve" ? -1 : 1));
 
   return (

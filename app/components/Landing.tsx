@@ -10,9 +10,8 @@ const STEPS = [
     { title: 'Read the verdict', body: 'You get a score out of 100 for the whole resume and for each category, with the changes to make first.' },
 ]
 
-// Front page for signed-out visitors. The preview on the right is the real sample review, not a mockup.
 const Landing = () => {
-    useEffect(wakeBackend, [])  // most visitors land here first
+    useEffect(wakeBackend, [])
 
     return (
     <>
@@ -31,7 +30,6 @@ const Landing = () => {
                 </div>
             </div>
 
-            {/* the sample review, previewed: resume on top with a single scan pass, verdict below */}
             <div className="panel overflow-hidden">
                 <div className="relative h-44 overflow-hidden border-b border-line bg-white sm:h-52">
                     <img src={DEMO_RESUME.imagePath} alt="" className="w-full object-cover object-top"/>

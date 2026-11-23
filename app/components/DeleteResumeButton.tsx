@@ -5,7 +5,6 @@ import { SpinnerIcon, TrashIcon } from "./Icons";
 interface Props {
   resume: Resume;
   onDeleted: () => void;
-  // "icon" for list rows, "button" for the review page header
   variant?: "icon" | "button";
 }
 
@@ -16,7 +15,7 @@ const DeleteResumeButton = ({ resume, onDeleted, variant = "icon" }: Props) => {
   const name = [resume.companyName, resume.jobTitle].filter(Boolean).join(" · ") || "this resume";
 
   const open = (e: React.MouseEvent) => {
-    // rows are links; don't navigate when deleting
+    // the row is a link, don't follow it
     e.preventDefault();
     e.stopPropagation();
     setError("");

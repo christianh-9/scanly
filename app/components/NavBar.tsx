@@ -11,7 +11,7 @@ const NavBar = () => {
 
     const signOut = async () => {
         await auth.signOut();
-        navigate("/");  // signed-out visitors see the front page
+        navigate("/");
     };
 
     return (

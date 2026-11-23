@@ -16,7 +16,7 @@
   --color-muted: #a1a1a1;
   --color-subtle: #8a8a8a;
 
-  /* signal: blue is interaction only; pass/warn/fail are score bands only */
+  /* blue = interactive, green/amber/red = score bands */
   --color-accent: #3291ff;
   --color-pass: #4cc38a;
   --color-warn: #f5a524;
@@ -87,7 +87,7 @@ a {
   @apply font-mono tabular-nums;
 }
 
-/* the one authored motion: score bars fill once when a review opens */
+/* score bars fill in on load */
 @keyframes bar-fill {
   from {
     transform: scaleX(0);
@@ -98,7 +98,7 @@ a {
   animation: bar-fill 900ms var(--ease-out-expo) both;
 }
 
-/* landing hero: one scan pass down the sample resume, echoing the logo's scan line */
+/* one pass down the resume on the landing page, like the logo */
 @keyframes scan {
   from {
     transform: translateY(-100%);

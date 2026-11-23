@@ -8,8 +8,7 @@ const CATEGORIES = [
     { key: 'skills', label: 'Skills' },
 ] as const
 
-// The verdict: overall score, one plain sentence, then the five category bars.
-// `where` finishes the flagged-changes line: "below" on a review page, elsewhere when previewed out of context
+// `where` ends the "N changes flagged..." line
 const Summary = ({ feedback, where = 'below' }: { feedback: Feedback; where?: string }) => {
     const score = feedback.overallScore
     const tone = scoreTone(score)

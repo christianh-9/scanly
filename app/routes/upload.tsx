@@ -33,22 +33,19 @@ const Upload = () => {
         if(!isLoading && !auth.isAuthenticated) navigate('/auth?next=/upload')
     }, [isLoading, auth.isAuthenticated])
 
-    // wake the backend while the form is being filled in
     useEffect(wakeBackend, [])
 
     const isProcessing = steps !== null && !error
 
-    // live clock for the active step and the run total
     useEffect(() => {
         if (!isProcessing) return
         const t = setInterval(() => setNow(performance.now()), 100)
         return () => clearInterval(t)
     }, [isProcessing])
 
-    // marks step i active and everything before it done, recording how long the previous step took
     const advance = (i: number) => {
         const now = performance.now()
-        const elapsed = now - stepStart.current // read before the ref moves; the updater below runs later
+        const elapsed = now - stepStart.current // read now, the updater runs later
         setSteps((s) => s && s.map((step, j) =>
             j === i - 1 ? { ...step, status: 'done', ms: elapsed }
             : j === i ? { ...step, status: 'active' }
@@ -109,7 +106,7 @@ const Upload = () => {
         setSteps(STEPS.map((label) => ({ label, status: 'pending' })))
         runStart.current = stepStart.current = performance.now()
         setNow(runStart.current)
-        // on phones the log sits below the form; bring it into view
+        // on phones the log is below the form
         logRef.current?.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
         try {
             await analyze({ companyName, jobTitle, jobDescription, file })

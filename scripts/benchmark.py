@@ -1,11 +1,8 @@
-"""Benchmark /api/analyze with the resumes in scripts/sample_resumes/.
+"""Times /api/analyze on the resumes in scripts/sample_resumes/.
 
-Run from the project root, with the backend running locally:
-    server/.venv/bin/python scripts/benchmark.py
-    server/.venv/bin/python scripts/benchmark.py --passes 2 --url http://localhost:8001
+    server/.venv/bin/python scripts/benchmark.py --url http://localhost:8001
 
-Requests are sent one at a time so we measure single-request latency, not queueing.
-Every run uses the same job title and description so only the backend code changes between benchmarks.
+One request at a time, same job every run.
 """
 
 import argparse
@@ -24,31 +21,19 @@ JOB_DESCRIPTION = (
 
 
 def summarize(times: list[float]) -> dict[str, float]:
-    """Return the median and 90th percentile of a list of durations in seconds.
-
-    Example: summarize([10, 12, 11, 30, 13]) -> {"median": 12, "p90": ...}
-
-    TODO:
-    - median: the middle value once sorted (the statistics module has a function for this)
-    - p90: the value 90% of runs are faster than. statistics.quantiles(data, n=10) splits the data
-      into 10 equal groups and returns the 9 cut points between them; which one is p90?
-    - think about the edge cases: what should happen with an empty list? with a single value?
-      (statistics.quantiles needs at least 2 values)
-    """
     if not times:
         return {"median": 0.0, "p90": 0.0}
     if len(times) == 1:
         return {"median": times[0], "p90": times[0]}
     return {
         "median": statistics.median(times),
-        # 9 cut points between 10 equal groups; the last one (index 8, i.e. -1) is the 90th percentile
+        # "inclusive" so p90 never goes past the slowest real run
         "p90": statistics.quantiles(times, n=10, method="inclusive")[-1],
     }
 
 
 def parse_server_timing(header: str) -> tuple[dict[str, float], dict[str, str]]:
-    """'gemini;dur=24310.0, model;desc="x", fallback;desc="y:503"'
-    -> ({"gemini": 24.31}, {"model": "x", "fallback": "y:503"})   (durations converted to seconds)"""
+    """'gemini;dur=2431.0, model;desc="x"' -> ({"gemini": 2.431}, {"model": "x"})"""
     steps, descs = {}, {}
     for part in header.split(","):
         name, *params = [p.strip() for p in part.split(";")]
@@ -119,7 +104,7 @@ def main() -> None:
                     run += 1
                     label = "A" if t == 0 else "B"
                     s = stats[url]
-                    # pace requests; this sleep happens before the timer starts, so it never inflates a measurement
+                    # wait for the rate limit before starting the timer
                     time.sleep(
                         max(0.0, args.interval - (time.perf_counter() - last_start))
                     )

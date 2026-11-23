@@ -26,7 +26,7 @@ export default function Home() {
 
         const resumes = (await kv.list('resume:*', true)) as KVItem[];
 
-        // skip records saved by older versions before analysis finished
+        // old versions saved reviews before the analysis finished
         const parsedResumes = resumes
             ?.map((resume) => JSON.parse(resume.value) as Resume)
             .filter((resume) => typeof resume.feedback === 'object')
@@ -40,7 +40,6 @@ export default function Home() {
 
   const removeResume = (id: string) => setResumes((all) => all.filter((r) => r.id !== id))
 
-  // signed-out visitors get the front page instead of a sign-in wall
   if (!isLoading && !auth.isAuthenticated) {
     return <main className="min-h-screen"><NavBar/><Landing/></main>
   }

@@ -1,5 +1,4 @@
-// A real review produced by Scanly's backend (Gemini Flash-Lite) for a fictional sample resume.
-// Shown at /demo so visitors can see the product without signing in; it never calls Gemini or Puter.
+// Real output from the backend for a made-up resume. Shown at /demo.
 export const DEMO_JOB_TITLE = "Software Engineer";
 export const DEMO_JOB_DESCRIPTION =
   "We are hiring a software engineer to build web applications with React, TypeScript and Python. " +

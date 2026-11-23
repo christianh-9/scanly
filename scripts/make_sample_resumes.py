@@ -1,8 +1,4 @@
-"""Generate fictional benchmark resumes into scripts/sample_resumes/ (people and companies are made up).
-
-Run from the project root:  server/.venv/bin/python scripts/make_sample_resumes.py
-Needs Google Chrome (prints HTML to PDF) and macOS `sips` (for the image-only "scanned" resume).
-"""
+"""Makes fake resumes for the benchmark. Needs Chrome and macOS (sips)."""
 import html
 import subprocess
 import tempfile
@@ -244,7 +240,7 @@ def main():
             chrome(f"--print-to-pdf={OUT / (name + '.pdf')}", page.as_uri())
             print("wrote", name + ".pdf")
 
-        # "scanned" copy of resume 1: screenshot -> image-only PDF with no text layer
+        # image-only copy of #1 to stand in for a scanned resume
         first = Path(tmp) / f"{RESUMES[0][0]}.html"
         png = Path(tmp) / "scan.png"
         chrome(f"--screenshot={png}", "--window-size=816,1056", first.as_uri())

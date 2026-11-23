@@ -34,7 +34,7 @@ declare global {
       kv: {
         get: (key: string) => Promise<string | null>;
         set: (key: string, value: string) => Promise<boolean>;
-        del: (key: string) => Promise<boolean>; // Puter names it del, not delete
+        del: (key: string) => Promise<boolean>; // del, not delete
         list: (pattern: string, returnValues?: boolean) => Promise<string[]>;
         flush: () => Promise<boolean>;
       };
@@ -317,7 +317,6 @@ export const usePuterStore = create<PuterStore>((set, get) => {
       setError("Puter.js not available");
       return;
     }
-    // return puter.ai.chat(prompt, imageURL, testMode, options);
     return puter.ai.chat(prompt, imageURL, testMode, options) as Promise<
       AIResponse | undefined
     >;
@@ -422,7 +421,7 @@ export const usePuterStore = create<PuterStore>((set, get) => {
     clearError: () => set({ error: null }),
   };
 });
-// Removes a review and the files it points at. Missing files are ignored so half-saved records can still be cleared.
+// Missing files are ignored so half-saved reviews can still be deleted
 export const deleteResume = async (resume: Pick<Resume, "id" | "resumePath" | "imagePath">) => {
   const { fs, kv } = usePuterStore.getState();
   await Promise.allSettled([fs.delete(resume.resumePath), fs.delete(resume.imagePath)]);

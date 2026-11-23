@@ -10,9 +10,8 @@ export const meta = () => ([
     { name: 'description', content: 'A sample Scanly review of a fictional resume.' },
 ])
 
-// Public sample review: static data, no sign-in, no API calls.
 const Demo = () => {
-    useEffect(wakeBackend, [])  // visitors often try their own resume next
+    useEffect(wakeBackend, [])
 
     return (
     <main className="min-h-screen">

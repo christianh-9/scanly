@@ -26,7 +26,6 @@ const TipItem = ({ tip }: { tip: Tip }) => (
 );
 
 const Details = ({ feedback }: { feedback: Feedback }) => {
-  // the weakest category opens first
   const weakest = SECTIONS.reduce((a, b) => (feedback[b.key].score < feedback[a.key].score ? b : a)).key;
 
   return (
